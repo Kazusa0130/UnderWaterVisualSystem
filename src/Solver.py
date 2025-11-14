@@ -32,10 +32,10 @@ class Solver:
             self.obj_points, 
             points, 
             self.intrinsic_matrix, 
-            self.dist_coeffs,                           
-            flags=cv2.SOLVEPNP_IPPE
+            self.dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE
         )
-        if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 100:
+        if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 50:
             return success, self.rvec, self.tvec
         else:
             return success, None, None
@@ -83,7 +83,9 @@ class Solver:
         cv2.putText(image, 'X', x_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         cv2.putText(image, 'Y', y_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         # cv2.putText(image, 'Z', z_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        
+        cv2.putText(image, f"X: {self.tvec[0][0]:.2f}m", (origin[0]+50, origin[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
+        cv2.putText(image, f"Y: {self.tvec[1][0]:.2f}m", (origin[0]+50, origin[1]+30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
+        cv2.putText(image, f"Z: {self.tvec[2][0]:.2f}m", (origin[0]+50, origin[1]+60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
         return image
     def sort_points_(self, points):
         points = np.array(points).reshape(4, 2)

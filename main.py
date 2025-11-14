@@ -2,16 +2,19 @@
 from src.ObjectDetector import *
 import cv2
 import numpy as np
-from Solver import *
-import src.sgbm
+from src.Solver import *
+
 
 MODEL_PATH = "./weights/best.pt"
 VIDEO_PATH = "./videos/npu_test.mp4" # 0
 CONFIG_PATH = "./config/stereo_camera_npu/camera_parameters.yaml"
 
 DEBUG = True
-SAVE_OUTPUT = False
+SAVE_OUTPUT = True
+SGM = True
 
+if SGM:
+    import sgbm  # pybind11绑定的cuda-sgm
 def main():
     # sgbm = SGBM()
     detector = ObjectDetector(model_path=MODEL_PATH)
@@ -25,9 +28,11 @@ def main():
         print("❌ 无法打开视频：", VIDEO_PATH)
         exit()
     # 使用pybind11绑定的cuda-sgm
-    # w, h = 640, 480
-    sg = sgbm.SGBMWrapper()
-    sg.init("config/stereo_camera_itr/camera_parameters.yaml", w, h)
+    if SGM:
+        w, h = 640, 480
+        sg = sgbm.SGBMWrapper()
+        sg.init("config/stereo_camera_itr/camera_parameters.yaml", w, h)
+    
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -35,9 +40,12 @@ def main():
             break
         left = frame[:, 0:640]
         right = frame[:, 640:1280]
-        disparity_map = sgbm.compute_disparity(frame, Debug=DEBUG)
-        disp = sg.compute(left, right)
-
+        # disparity_map = sgbm.compute_disparity(frame, Debug=DEBUG)
+        # disp = sg.compute(left, right)
+        if SGM:
+            left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
+            right_gray = cv2.cvtColor(right, cv2.COLOR_BGR2GRAY)
+            disp = sg.compute(left_gray, right_gray)
         if DEBUG:
             cv2.imwrite("LeftImage.jpg", left)
             cv2.imwrite("RightImage.jpg", right)
@@ -55,23 +63,22 @@ def main():
             tvec = tvec.flatten()
             rvec = rvec.flatten()
             print(f"X: {tvec[0]:.2f}m Y: {tvec[1]:.2f}m Z: {tvec[2]:.2f}m")
+        
             out_frame = solver.visualize_pose(frame[:, 0:640], length=0.05)
             if DEBUG:
                 cv2.imshow("Pose Visualization", out_frame)
-        disp = cv2.normalize(disp, disp, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        if SGM:
+            disp[disp < 0] = 0
+            disp[disp > 1000] = 1000
+            dis_color = cv2.UMat(disp)
+            dis_color = cv2.normalize(dis_color, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            dis_color = cv2.applyColorMap(dis_color, cv2.COLORMAP_TURBO)
 
-        # # 生成深度图（颜色图）
-        disp[disp < 0] = 0
-        disp[disp > 1000] = 1000
-        dis_color = cv2.UMat(disp)
-        dis_color = cv2.normalize(dis_color, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        dis_color = cv2.applyColorMap(dis_color, cv2.COLORMAP_TURBO)
-
-        cv2.imshow("Frame", dis_color)
+        # cv2.imshow("Frame", dis_color)
         cv2.imshow("Left", frame[:, 0:640])
         if SAVE_OUTPUT:
             out.write(out_frame)
-            out.write(disparity_map)
+            # out.write(disparity_map)
             
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
