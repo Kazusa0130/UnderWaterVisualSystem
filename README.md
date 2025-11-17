@@ -33,8 +33,21 @@ make -j$(nproc)
 sudo make install
 ```
 
+2. Install yaml-cpp
+
+    ```sh
+    git clone https://github.com/jbeder/yaml-cpp.git -b 0.8.0
+    mkdir build && cd build
+    make -j$(nproc)
+    sudo make install
+    ```
+    
+    
+
 - Future implementations will attempt to utilize the FetchContent module for integrating third-party libraries.
+
+
 
 ## Test Environment
 
-![测试环境](.\.assets\image.png)
+![测试环境](./.assets/image.png)
