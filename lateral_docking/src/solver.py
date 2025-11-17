@@ -36,6 +36,8 @@ class Solver:
             flags=cv2.SOLVEPNP_ITERATIVE
         )
         if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 50:
+            self.tvec = self.tvec.flatten()
+            self.rvec = self.rvec.flatten()
             return success, self.rvec, self.tvec
         else:
             return success, None, None
