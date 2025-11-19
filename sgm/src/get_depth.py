@@ -1,4 +1,4 @@
-import sgm
+from module import sgm
 import cv2
 
 VIDEO_PATH = 0
