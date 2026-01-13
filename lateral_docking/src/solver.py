@@ -3,7 +3,7 @@ import yaml
 import numpy as np
 
 class Solver:
-    def __init__(self, config_path, obj_size=0.05):
+    def __init__(self, config_path, obj_size=0.05) -> None:
         with open(config_path, 'r') as file:
             config_data = yaml.safe_load(file)
         self.intrinsic_matrix = np.array(config_data['Left']['CameraMatrix']['data']).reshape(3,3)
@@ -19,7 +19,7 @@ class Solver:
         self.tvec = None
         self.rvec = None
 
-    def solve_pnp(self, target_points):
+    def solve_pnp(self, target_points) -> tuple[bool, np.ndarray, np.ndarray]:
         points = self.sort_points_(target_points)
         points = np.array([
             [points[0][0], points[0][1]],
@@ -42,7 +42,7 @@ class Solver:
         else:
             return success, None, None
 
-    def visualize_pose(self, image, length=0.01):
+    def visualize_pose(self, image, length=0.01) -> np.ndarray:
         """
         在图像上绘制表示位姿的3D坐标轴
         
@@ -89,7 +89,8 @@ class Solver:
         cv2.putText(image, f"Y: {self.tvec[1][0]:.2f}m", (origin[0]+50, origin[1]+30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
         cv2.putText(image, f"Z: {self.tvec[2][0]:.2f}m", (origin[0]+50, origin[1]+60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
         return image
-    def sort_points_(self, points):
+
+    def sort_points_(self, points) -> np.ndarray:
         points = np.array(points).reshape(4, 2)
         
         center = np.mean(points, axis=0)

@@ -2,6 +2,7 @@
 from object_detector import *
 import cv2
 import numpy as np
+import serial
 from solver import *
 
 
@@ -14,9 +15,13 @@ DEBUG = True
 SAVE_OUTPUT = False
 SGM = False
 
+SERIAL_PORT = '/dev/ttyTHS1'
+SERIAL_BAUD = 115200
+
 def main():
     detector = ObjectDetector(model_path=MODEL_PATH)
     solver = Solver(config_path=CONFIG_PATH)
+    # ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=1)
     cap = cv2.VideoCapture(VIDEO_PATH)
 
     if SAVE_OUTPUT:
@@ -31,8 +36,8 @@ def main():
         if not ret:
             print("❌ 无法读取视频帧，可能已到达视频末尾。")
             break
-        left = frame[:, 0:640]
-        right = frame[:, 640:1280]
+        right = frame[:, 0:640]
+        left = frame[:, 640:1280]
 
         if DEBUG:
             cv2.imwrite("LeftImage.jpg", left)
@@ -50,7 +55,7 @@ def main():
             if success == False: continue
 
             print(f"X: {tvec[0]:.2f}m Y: {tvec[1]:.2f}m Z: {tvec[2]:.2f}m")
-        
+            msg = f"${tvec[0][0]:.2f},{tvec[1][0]:.2f},{tvec[2][0]:.2f}#"
             if DEBUG:
                 out_frame = solver.visualize_pose(frame[:, 0:640], length=0.05)
                 cv2.imshow("Pose Visualization", out_frame)
@@ -62,7 +67,7 @@ def main():
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-
+    # ser.write(msg.encode())
     cap.release()
     cv2.destroyAllWindows()
 
