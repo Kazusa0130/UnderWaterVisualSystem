@@ -43,19 +43,6 @@ class Solver:
             return success, None, None
 
     def visualize_pose(self, image, length=0.01) -> np.ndarray:
-        """
-        在图像上绘制表示位姿的3D坐标轴
-        
-        参数:
-        image: 输入图像
-        camera_matrix: 相机内参矩阵
-        dist_coeffs: 相机畸变系数
-        rvec: 旋转向量 (3x1)
-        tvec: 平移向量 (3x1)
-        length: 坐标轴长度 (米)
-        """
-        
-        # 定义3D坐标轴的点 (X, Y, Z轴)
         axis_points = np.float32([
             [0, 0, 0],           # 原点
             [length, 0, 0],      # X轴
@@ -63,25 +50,19 @@ class Solver:
             [0, 0, length]       # Z轴
         ]).reshape(-1, 3)
         
-        # 将3D点投影到2D图像平面
+        # Reproject 3D points to image plane
         img_points, _ = cv2.projectPoints(axis_points, self.rvec, self.tvec, self.intrinsic_matrix, self.dist_coeffs)
         img_points = img_points.reshape(-1, 2).astype(int)
         
-        # 提取各个点的坐标
         origin = tuple(img_points[0])
         x_axis = tuple(img_points[1])
         y_axis = tuple(img_points[2]) 
         # z_axis = tuple(img_points[3])
         
-        # 绘制坐标轴线条
-        # X轴 - 红色
+        # visualize the axes(x, y, z) -> (red, green, blue)
         cv2.arrowedLine(image, origin, x_axis, (0, 0, 255), 3)
-        # Y轴 - 绿色
         cv2.arrowedLine(image, origin, y_axis, (0, 255, 0), 3)
-        # Z轴 - 蓝色
         # cv2.arrowedLine(image, origin, z_axis, (255, 0, 0), 3)
-        
-        # 在轴末端添加标签
         cv2.putText(image, 'X', x_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         cv2.putText(image, 'Y', y_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         # cv2.putText(image, 'Z', z_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)

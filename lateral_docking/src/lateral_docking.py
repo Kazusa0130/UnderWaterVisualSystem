@@ -4,10 +4,11 @@ import cv2
 import numpy as np
 import serial
 from solver import *
-
+import yaml
 
 MODEL_PATH = "../weights/best.pt"
-VIDEO_PATH = "../videos/npu_test.mp4" # 0
+# VIDEO_PATH = "../videos/npu_test.mp4"
+VIDEO_PATH = 0
 CONFIG_PATH = "../config/stereo_camera_npu/camera_parameters.yaml"
 SAVE_PATH = "../videos/pose_output.mp4"
 
@@ -28,13 +29,13 @@ def main():
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         out = cv2.VideoWriter(SAVE_PATH, fourcc, 20.0, (640, 480))
     if not cap.isOpened():
-        print("❌ 无法打开视频：", VIDEO_PATH)
+        print("Unable to open video:", VIDEO_PATH)
         exit()
     
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("❌ 无法读取视频帧，可能已到达视频末尾。")
+            print("VideoStream end or cannot fetch the frame.")
             break
         right = frame[:, 0:640]
         left = frame[:, 640:1280]
