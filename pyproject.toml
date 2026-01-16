@@ -5,9 +5,39 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "opencv-contrib-python>=4.12.0.88",
-    "opencv-python>=4.12.0.88",
-    "pyyaml>=6.0.3",
-    "serial>=0.0.97",
-    "ultralytics>=8.3.228",
+    "lap>=0.5.12",
+    "opencv-contrib-python==4.12.0.88",
+    "opencv-python==4.12.0.88",
+    "pyyaml==6.0.3",
+    "serial==0.0.97",
+    "torch==2.9.1; platform_machine == 'AMD64'",
+    "torchvision==0.24.1; platform_machine == 'AMD64'",
+    "ultralytics==8.3.228",
 ]
+
+[tool.uv]
+environments = [
+    "platform_machine == 'aarch64'",
+    "platform_machine == 'AMD64'",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu114", marker = "platform_machine == 'aarch64'" }, # Jetson
+    { index = "pytorch-cu128", marker = "platform_machine == 'AMD64'" },   # Windows
+]
+torchvision = [
+    { index = "pytorch-cu114", marker = "platform_machine == 'aarch64'" }, # Jetson
+    { index = "pytorch-cu128", marker = "platform_machine == 'AMD64'" },   # Windows
+]
+
+
+[[tool.uv.index]]
+name = "pytorch-cu114"
+url = "https://download.pytorch.org/whl/cu114"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

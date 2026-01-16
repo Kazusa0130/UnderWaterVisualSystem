@@ -66,13 +66,13 @@ class Solver:
         cv2.putText(image, 'X', x_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         cv2.putText(image, 'Y', y_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         # cv2.putText(image, 'Z', z_axis, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        cv2.putText(image, f"X: {self.tvec[0][0]:.2f}m", (origin[0]+50, origin[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
-        cv2.putText(image, f"Y: {self.tvec[1][0]:.2f}m", (origin[0]+50, origin[1]+30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
-        cv2.putText(image, f"Z: {self.tvec[2][0]:.2f}m", (origin[0]+50, origin[1]+60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
+        cv2.putText(image, f"X: {self.tvec[0]:.2f}m", (origin[0]+50, origin[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
+        cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (origin[0]+50, origin[1]+30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 1)
+        cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (origin[0]+50, origin[1]+60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 1)
         return image
 
     def sort_points_(self, points) -> np.ndarray:
-        points = np.array(points).reshape(4, 2)
+        points = np.array(points).reshape(-1, 2)
         
         center = np.mean(points, axis=0)
         
