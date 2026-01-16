@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+uv.lock
 
 # Virtual environments
 .venv
@@ -12,3 +13,7 @@ wheels/
 # video
 *.avi
 *.mp4
+
+# Algorithm Test code
+Dev/
+camera_module.py

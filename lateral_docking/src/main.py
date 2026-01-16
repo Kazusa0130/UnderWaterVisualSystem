@@ -56,8 +56,9 @@ def main():
             success, rvec, tvec = solver.solve_pnp(target_point)
             if success == False: 
                 continue
-            # print(f"X: {tvec[0]:.2f}m Y: {tvec[1]:.2f}m Z: {tvec[2]:.2f}m")
-            msg = f"${tvec[0]:.2f},{tvec[1]:.2f},{tvec[2]:.2f}#"
+            msg = f"{tvec[0]:.2f},{tvec[1]:.2f},{abs(tvec[2]):.2f}, {rvec[0]:.2f},{rvec[1]:.2f},{rvec[2]:.2f}\r\n"
+            # print("Pose:", msg.strip())
+            # ser.write(msg.encode())
             if DEBUG:
                 out_frame = solver.visualize_pose(left, length=0.05)
                 cv2.imshow("Pose Visualization", out_frame)
