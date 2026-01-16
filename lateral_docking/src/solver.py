@@ -85,5 +85,3 @@ class Solver:
         sorted_points = points[sorted_indices]
         
         return sorted_points
-    
-
