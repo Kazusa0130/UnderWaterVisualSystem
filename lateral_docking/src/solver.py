@@ -3,19 +3,19 @@ import yaml
 import numpy as np
 
 class Solver:
-    def __init__(self, config_path, obj_size=0.05) -> None:
+    def __init__(self, config_path, obj_width=0.05, obj_length=0.05) -> None:
         with open(config_path, 'r') as file:
             config_data = yaml.safe_load(file)
         self.intrinsic_matrix = np.array(config_data['Left']['CameraMatrix']['data']).reshape(3,3)
         self.dist_coeffs = np.array(config_data['Left']['distortion_coefficients']['data'])
-        self.obj_size = obj_size
+        self.obj_width = obj_width
+        self.obj_length = obj_length
         self.obj_points = np.array([
-            (-self.obj_size/2, -self.obj_size/2, 0),
-            (-self.obj_size/2,  self.obj_size/2, 0),
-            ( self.obj_size/2,  self.obj_size/2, 0),
-            ( self.obj_size/2, -self.obj_size/2, 0),
-            ]
-        )
+            (-self.obj_width/2, -self.obj_length/2, 0),
+            (-self.obj_width/2,  self.obj_length/2, 0),
+            ( self.obj_width/2,  self.obj_length/2, 0),
+            ( self.obj_width/2, -self.obj_length/2, 0),
+        ])
         self.tvec = None
         self.rvec = None
 

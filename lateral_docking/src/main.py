@@ -4,7 +4,7 @@ import yaml
 # import serial
 
 # from src.SGBM import *
-from object_detector import *
+from detector import *
 from solver import *
 from tools import *
 
@@ -21,9 +21,12 @@ SGM = False
 SERIAL_PORT = '/dev/ttyTHS1'
 SERIAL_BAUD = 115200
 
+OBJ_LENGTH = 0.05  # m
+OBJ_WIDTH = 0.05   # m
+
 def main():
     detector = ObjectDetector(model_path=MODEL_PATH, debug=DEBUG)
-    solver = Solver(config_path=CONFIG_PATH)
+    solver = Solver(config_path=CONFIG_PATH, obj_width=OBJ_WIDTH, obj_length=OBJ_LENGTH)
     # ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=1)
     cap = cv2.VideoCapture(VIDEO_PATH)
 
