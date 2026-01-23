@@ -13,6 +13,7 @@ uv.lock
 # video
 *.avi
 *.mp4
+*.txt
 
 # Algorithm Test code
 Dev/
