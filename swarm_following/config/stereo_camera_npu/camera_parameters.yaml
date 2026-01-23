@@ -1,0 +1,44 @@
+Left:
+  CameraMatrix:
+    rows: 3
+    cols: 3
+    data: [446.9425, 0.2343, 325.7460, 0.0, 447.0474, 270.0880, 0.0, 0.0, 1.0000]
+  distortion_model: plumb_bob
+  distortion_coefficients:
+    rows: 1
+    cols: 5
+    data: [-0.235267, 0.144287, -0.000751, 0.000247, -0.028519]
+  rectification_matrix:
+    rows: 3
+    cols: 3
+    data: [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
+  projection_matrix:
+    rows: 3
+    cols: 4
+    data: [446.9425, 0.0, 325.7460, 0.0, 0.0, 447.0474, 270.0880, 0.0, 0.0, 0.0, 1.000000, 0.000000]
+Right:
+  CameraMatrix:
+    rows: 3
+    cols: 3
+    data: [448.1290, 0.2101, 352.6952, 0.0, 448.3027, 296.5710, 0.0, 0.0, 1.0000]
+  distortion_model: plumb_bob
+  distortion_coefficients:
+    rows: 1
+    cols: 5
+    data: [-0.241239, 0.158700, -0.000380, 0.000495, -0.037674]
+  rectification_matrix:
+    rows: 3
+    cols: 3
+    data: [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
+  projection_matrix:
+    rows: 3
+    cols: 4
+    data: [448.1290, 0.0, 352.6952, 0.0, 0.0, 448.3027, 296.5710, 0.0, 0.0, 0.0, 1.000000, 0.000000]
+RotationMatrix:
+  rows: 3
+  cols: 3
+  data: [0.9999, 0.0079, -0.0149, -0.0079, 1.0000, 0.0007, 0.0149, -0.0006, 0.9999]
+TranslationVector:
+  rows: 3
+  cols: 1
+  data: [-95.9218, 0.6063, -0.5965]

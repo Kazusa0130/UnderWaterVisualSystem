@@ -8,7 +8,7 @@ from detector import *
 from solver import *
 from tools import *
 
-MODEL_PATH = "./lateral_docking/weights/best.pt"
+MODEL_PATH = "./lateral_docking/models/best.pt"
 VIDEO_PATH = "./lateral_docking/videos/npu_test.mp4"
 # VIDEO_PATH = 0
 CONFIG_PATH = "./lateral_docking/config/stereo_camera_npu/camera_parameters.yaml"
