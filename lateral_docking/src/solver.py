@@ -1,6 +1,7 @@
 import cv2
 import yaml
 import numpy as np
+from config import *
 
 class Solver:
     def __init__(self, config_path, obj_width=0.05, obj_length=0.05) -> None:
@@ -19,7 +20,34 @@ class Solver:
         self.tvec = None
         self.rvec = None
 
-    def solve_pnp(self, target_points) -> tuple[bool, np.ndarray, np.ndarray]:
+    def solver(self, result):
+        # 如果多于4/5个点，则寻找最下方的5个点
+        # 基于图像y轴进行排序
+        final_points = []
+        if len(result) >= 4:
+            cmp = lambda item: item[1]
+            result.sort(key=cmp)
+            final_points = result[-4:]
+            pass
+        if(len(results) == 4):
+            final_points = result
+        for conf, box in results:
+            x1, y1, x2, y2 = map(int, box)
+            x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
+            cv2.rectangle(left, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            target_point.append((x_center, y_center))
+        success, rvec, tvec = solver.solve_pnp(target_point)
+        if success == False:
+            print("PnP solving failed.")
+            pass
+        msg = f"{tvec[0]:.2f},{tvec[1]:.2f},{abs(tvec[2]):.2f}, {rvec[0]:.2f},{rvec[1]:.2f},{rvec[2]:.2f}\r\n"
+        # print("Pose:", msg.strip())
+        # ser.write(msg.encode())
+        if DEBUG:
+            out_frame = solver.visualize_pose(left, length=0.05)
+            cv2.imshow("Pose Visualization", out_frame)
+        pass
+    def solve_pnp(self, target_points):
         points = self.sort_points_(target_points)
         points = np.array([
             [points[0][0], points[0][1]],
@@ -38,11 +66,13 @@ class Solver:
         if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 50:
             self.tvec = self.tvec.flatten()
             self.rvec = self.rvec.flatten()
+            if self.tvec[2] < 0.4:
+                success = False
             return success, self.rvec, self.tvec
         else:
             return success, None, None
 
-    def visualize_pose(self, image, length=0.01) -> np.ndarray:
+    def visualize_pose(self, image, length=0.01):
         axis_points = np.float32([
             [0, 0, 0],           # 原点
             [length, 0, 0],      # X轴
@@ -73,7 +103,15 @@ class Solver:
 
     def sort_points_(self, points) -> np.ndarray:
         points = np.array(points).reshape(-1, 2)
-        
+        if POINT_MODULE == 0:
+            # 需要剔除镜像点
+            if len(points) > 4:
+                points = points[np.argsort(points[:, 1])][-4:]
+        else:
+            if len(points) > 5:
+                points = points[np.argsort(points[:, 1])][-5:]
+                # 手动选择中心点
+                pass
         center = np.mean(points, axis=0)
         
         angles = []

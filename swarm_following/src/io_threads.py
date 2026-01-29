@@ -13,7 +13,7 @@ class FrameGrabber(threading.Thread):
         self.output_queue = output_queue
         self.stop_event = stop_event
 
-    def run(self) -> None:
+    def run(self):
         while not self.stop_event.is_set():
             success, frame = self.cap.read()
             if not success:
@@ -25,7 +25,7 @@ class FrameGrabber(threading.Thread):
                         if self.output_queue.empty():
                             self.output_queue.put(None)
                         break
-                time.sleep(0.01)
+                time.sleep(0.05)
                 continue
             if not self.output_queue.empty():
                 try:
@@ -45,11 +45,11 @@ class SerialSender(threading.Thread):
         self.ser = None
         self.enabled = enabled
 
-    def open(self) -> None:
+    def open(self):
         self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
         time.sleep(2)
 
-    def run(self) -> None:
+    def run(self):
         if not self.enabled:
             return
         try:

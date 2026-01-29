@@ -3,7 +3,7 @@ from pathlib import Path
 BASE_DIR = "./swarm_following/"
 
 # WEIGHTS_PATH = str(BASE_DIR / "weights" / "best.pt")
-WEIGHTS_PATH = str(BASE_DIR + "/models/best-1024ls.pt")
+WEIGHTS_PATH = str(BASE_DIR + "models/best-1024ls.pt")
 CAMERA_YAML = str(BASE_DIR + "config/stereo_camera_npu/camera_parameters.yaml")
 
 CAMERA_INDEX = "D:/Documents/Project/BJTU_Under_Water_Visual_System/swarm_following/video/following_data1.mp4"

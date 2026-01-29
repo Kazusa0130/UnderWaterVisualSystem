@@ -4,7 +4,7 @@ import cv2
 import config as cfg
 
 
-def find_black_center(roi: np.ndarray) -> tuple | None:
+def find_black_center(roi: np.ndarray):
     lower_black = np.array(cfg.BLACK_LOWER, dtype=np.uint8)
     upper_black = np.array(cfg.BLACK_UPPER, dtype=np.uint8)
     mask = cv2.inRange(roi, lower_black, upper_black)
@@ -30,7 +30,7 @@ def find_black_center(roi: np.ndarray) -> tuple | None:
     return nearest
 
 
-def classify_in_roi(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> tuple[str, int]:
+def classify_in_roi(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int):
     label, area = "none", 0
     if x2 - x1 < cfg.MIN_ROI_SIZE or y2 - y1 < cfg.MIN_ROI_SIZE:
         return label, area

@@ -16,7 +16,7 @@ from vision_utils import find_black_center, classify_in_roi
 from tools import open_video_writers, open_serial_log
 
 
-def _setup_camera() -> cv2.VideoCapture:
+def _setup_camera():
     cap = cv2.VideoCapture(cfg.CAMERA_INDEX)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     cap.set(cv2.CAP_PROP_FPS, cfg.FPS)
@@ -24,7 +24,7 @@ def _setup_camera() -> cv2.VideoCapture:
     return cap
 
 
-async def process_stream() -> None:
+async def process_stream():
     cap = _setup_camera()
 
     image_size = (cfg.WIDTH, cfg.HEIGHT)
@@ -60,6 +60,7 @@ async def process_stream() -> None:
             if cfg.SAVE_SERIAL_LOG:
                 serial_log, _ = open_serial_log(cfg.SAVE_PATH)
         while True:
+            imageIO_start_time = time.time()
             try:
                 frame = frame_queue.get(timeout=0.5)
             except Empty:
@@ -77,9 +78,11 @@ async def process_stream() -> None:
             frame_right = cv2.flip(frame_right, -1)
 
             left_rect, right_rect = depth_estimator.rectify(frame_left, frame_right)
+            imageIO_end_time = time.time()
+            print(f"Image IO Time: {imageIO_end_time - imageIO_start_time:.4f}")
             if cfg.SAVE_OUTPUT and cfg.SAVE_RAW_VIDEO and raw_writer is not None:
                 raw_writer.write(left_rect)
-            results = list(model.track(left_rect, persist=True, stream=True, conf=cfg.CONF))
+            results = list(model.track(left_rect, persist=True, stream=False, conf=cfg.CONF))
 
             if not results or results[0].boxes.id is None:
                 non_count += 1
@@ -90,6 +93,10 @@ async def process_stream() -> None:
                         serial_log.write(f"{time.time():.3f} {serial_data}")
                 if cfg.SAVE_OUTPUT and cfg.SAVE_OUTPUT_VIDEO and out_writer is not None:
                     out_writer.write(left_rect)
+                end_time = time.time()
+                if cfg.SHOW_FPS:
+                    print(f"Total CostTime: {end_time - start_time:.4f}")
+                start_time = end_time
                 if cfg.SHOW_IMSHOW:
                     cv2.imshow(cfg.WINDOW_NAME, left_rect)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -109,15 +116,27 @@ async def process_stream() -> None:
                     continue
                 roi = left_rect[y1:y2, x1:x2]
                 roi_right = right_rect[y1:y2, x1:x2]
+
+                classify_start_time = time.time()
                 label, area = classify_in_roi(annotated_frame, x1, y1, x2, y2)
+                classify_end_time = time.time()
+                print(f"Classify Time: {classify_end_time - classify_start_time:.4f}")
+
+                findblack_start_time = time.time()
                 local_center = find_black_center(roi)
+                findblack_end_time = time.time()
+                print(f"Find Black Time: {findblack_end_time - findblack_start_time:.4f}")
+
                 if local_center is None:
                     continue
                 centerpoint = (local_center[0] + x1, local_center[1] + y1)
 
+                stereo_start_time = time.time()
                 disparity_roi = depth_estimator.compute_disparity(roi, roi_right)
                 disp_value = float(disparity_roi[local_center[1], local_center[0]])
                 cam_x, cam_y, dis = depth_estimator.project_to_3d(centerpoint[0], centerpoint[1], disp_value)
+                stereo_end_time = time.time()
+                print(f"Stereo Time: {stereo_end_time - stereo_start_time:.4f}")
 
                 recent_distances.append(dis)
                 smoothed_dis = float(np.mean(recent_distances))
@@ -152,7 +171,7 @@ async def process_stream() -> None:
                 out_writer.write(annotated_frame)
             end_time = time.time()
             if cfg.SHOW_FPS:
-                print(f"FPS: {end_time - start_time:.4f}")
+                print(f"Total CostTime: {end_time - start_time:.4f}")
             start_time = end_time
 
             if cfg.SHOW_IMSHOW:

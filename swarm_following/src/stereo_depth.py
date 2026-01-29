@@ -20,13 +20,13 @@ class StereoConfig:
 
 
 class StereoDepthEstimator:
-    def __init__(self, config: StereoConfig, sgbm_params: dict) -> None:
+    def __init__(self, config: StereoConfig, sgbm_params: dict):
         self.config = config
         self.sgbm_params = sgbm_params
         self._init_rectify_maps()
         self._init_matchers()
 
-    def _init_rectify_maps(self) -> None:
+    def _init_rectify_maps(self):
         flags = cv2.CALIB_ZERO_DISPARITY
         r1, r2, p1, p2, q, _, _ = cv2.stereoRectify(
             self.config.k1,
@@ -57,7 +57,7 @@ class StereoDepthEstimator:
             cv2.CV_16SC2,
         )
 
-    def _init_matchers(self) -> None:
+    def _init_matchers(self):
         self.left_matcher = cv2.StereoSGBM_create(**self.sgbm_params)
         self.right_matcher = None
         self.wls_filter = None
@@ -69,12 +69,12 @@ class StereoDepthEstimator:
             self.wls_filter.setLRCthresh(24)
             self.wls_filter.setDepthDiscontinuityRadius(3)
 
-    def rectify(self, left: np.ndarray, right: np.ndarray) -> tuple:
+    def rectify(self, left: np.ndarray, right: np.ndarray):
         left_rectified = cv2.remap(left, self.left_map1, self.left_map2, cv2.INTER_LINEAR)
         right_rectified = cv2.remap(right, self.right_map1, self.right_map2, cv2.INTER_LINEAR)
         return left_rectified, right_rectified
 
-    def compute_disparity(self, left_rect: np.ndarray, right_rect: np.ndarray) -> np.ndarray:
+    def compute_disparity(self, left_rect: np.ndarray, right_rect: np.ndarray):
         left_gray = cv2.cvtColor(left_rect, cv2.COLOR_BGR2GRAY)
         right_gray = cv2.cvtColor(right_rect, cv2.COLOR_BGR2GRAY)
         left_disp = self.left_matcher.compute(left_gray, right_gray)
@@ -84,7 +84,7 @@ class StereoDepthEstimator:
             return filtered.astype(np.float32) / 16.0
         return left_disp.astype(np.float32) / 16.0
 
-    def project_to_3d(self, x: int, y: int, disparity: float) -> tuple:
+    def project_to_3d(self, x: int, y: int, disparity: float):
         if disparity <= 0:
             return 0.0, 0.0, 0.0
         vec = np.array([x, y, disparity, 1.0], dtype=np.float32)
@@ -97,7 +97,7 @@ class StereoDepthEstimator:
         return x3d, y3d, z3d
 
 
-def load_stereo_config(yaml_path: str, image_size: tuple) -> StereoConfig:
+def load_stereo_config(yaml_path: str, image_size: tuple):
     with Path(yaml_path).open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     k1 = np.array(data["Left"]["CameraMatrix"]["data"], dtype=np.float32).reshape(3, 3)
@@ -109,7 +109,7 @@ def load_stereo_config(yaml_path: str, image_size: tuple) -> StereoConfig:
     return StereoConfig(k1=k1, d1=d1, k2=k2, d2=d2, r=r, t=t, image_size=image_size)
 
 
-def build_sgbm_params(image_size: tuple) -> dict:
+def build_sgbm_params(image_size: tuple):
     width, _ = image_size
     num_disp = max(16, (width // 8) // 16 * 16)
     block_size = cfg.SGBM_BLOCK_SIZE

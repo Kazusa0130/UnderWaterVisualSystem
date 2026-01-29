@@ -12,6 +12,7 @@ dependencies = [
     "serial>=0.0.97",
     "torch>=2.5.1; platform_machine == 'AMD64'",
     "torchvision>=0.20.1; platform_machine == 'AMD64'",
+    "tqdm>=4.67.1",
     "ultralytics==8.3.228",
 ]
 
