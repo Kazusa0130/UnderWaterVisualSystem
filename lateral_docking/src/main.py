@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import yaml
+import time
 # import serial
 
 from detector import *
@@ -16,7 +17,7 @@ def main():
 
     raw_data_count, output_data_count = count_files_in_directory(SAVE_PATH)
     if SAVE_OUTPUT:
-        fourcc = cv2.VideoWriter_fourcc(*'DIVX')
+        fourcc = cv2.VideoWriter_fourcc(*'DIVX')  # ty:ignore[unresolved-attribute]
         raw_data_out = cv2.VideoWriter(SAVE_PATH+"raw_data/"+f"raw_data_{raw_data_count}.avi", fourcc, 20.0, (640, 480))
         output_data_out = cv2.VideoWriter(SAVE_PATH+"output_data/"+f"output_{output_data_count}.avi", fourcc, 20.0, (640, 480))
     if not cap.isOpened():
@@ -24,16 +25,16 @@ def main():
         exit()
     
     while True:
+        start_time = time.time()
         ret, frame = cap.read()
         if not ret:
             print("VideoStream end or cannot fetch the frame.")
             break
-        right = frame[:, 0:640,:]
-        left = frame[:, 640:1280,:]
+        right = frame[:, 0:640, :]
+        left = frame[:, 640:1280, :]
         if FLIP:
             left = cv2.flip(left, -1)
             right = cv2.flip(right, -1)
-
         if SAVE_OUTPUT:
             raw_data_out.write(left)
         results = detector.detect(left)
@@ -42,25 +43,30 @@ def main():
         if len(target_list) < 4:
             print("Not enough points detected.")
         else:
-            target_point = []
+            center_points = []
             for conf, box in target_list:
                 x1, y1, x2, y2 = map(int, box)
                 x_center, y_center = (x1 + x2) // 2, (y1 + y2) // 2
                 # cv2.rectangle(left, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                target_point.append((x_center, y_center))
-            success, rvec, tvec = solver.solve_pnp(target_point)
+                center_points.append((x_center, y_center))
+            success, rvec, tvec = solver.solver(center_points)
             if success == True and rvec is not None and tvec is not None:
                 msg = f"{tvec[0]:.2f},{tvec[1]:.2f},{tvec[2]:.2f}, {rvec[0]:.2f},{rvec[1]:.2f},{rvec[2]:.2f}\r\n"
                 print("Pose:", msg.strip())
                 # ser.write(msg.encode())
-                out_frame = solver.visualize_pose(out_frame, length=0.05)
+                out_frame = solver.visualize_pose(out_frame, length=0.2)
         if DEBUG:
             cv2.imshow("Pose Visualization", out_frame)
         if SAVE_OUTPUT:
             output_data_out.write(out_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        end_time = time.time()
+        print(f"FPS: {1/(end_time - start_time):.2f}")
     # ser.write(msg.encode())
+    if SAVE_OUTPUT:
+        raw_data_out.release()
+        output_data_out.release()
     cap.release()
     cv2.destroyAllWindows()
 

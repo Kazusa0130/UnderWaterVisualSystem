@@ -10,11 +10,11 @@ class ObjectDetector:
         self.target_list = []
 
     def detect(self, image):
-        self.results = self.model.track(source=image, conf=0.7, iou=0.5, verbose=False)
+        self.results = self.model.predict(source=image, conf=0.85, iou=0.8, verbose=False)
         return self.results
     def get_target_list(self):
         self.target_list = []
-        for box in self.results[0].boxes:
+        for box in self.results[0].boxes:  # ty:ignore[not-subscriptable, not-iterable]
             # 如果box的宽度和高度小于某个阈值，则忽略
             if (box.xyxy[0][2] - box.xyxy[0][0]) < 5 or (box.xyxy[0][3] - box.xyxy[0][1]) < 5:
                 continue

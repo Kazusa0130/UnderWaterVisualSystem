@@ -25,6 +25,7 @@ def _setup_camera():
 
 
 async def process_stream():
+    start_time = time.time()
     cap = _setup_camera()
 
     image_size = (cfg.WIDTH, cfg.HEIGHT)
@@ -48,7 +49,6 @@ async def process_stream():
 
     recent_distances = deque(maxlen=10)
     non_count = 0
-    start_time = time.time()
     raw_writer = None
     out_writer = None
     serial_log = None
