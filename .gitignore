@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 wheels/
+.claude/
 *.egg-info
 uv.lock
 
@@ -14,6 +15,11 @@ uv.lock
 *.avi
 *.mp4
 *.txt
+*.csv
 
 # Algorithm Test code
 Dev/
+test*.py
+# local settings
+CLAUDE.md
+*.ps1

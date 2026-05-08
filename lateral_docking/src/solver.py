@@ -109,48 +109,57 @@ class Solver:
         else:
             return success, None, None
 
-    def visualize_pose(self, image, length=0.1):
+    def visualize_pose(self, image, length=0.1, show_rotation=True):
+        # Reproject 3D points to image plane
         axis_points_4 = np.float32([
             [0, 0, 0],           # 原点
             [length, 0, 0],      # X轴
-            [0, length, 0],      # Y轴  
+            [0, length, 0],      # Y轴
             [0, 0, length]       # Z轴
         ]).reshape(-1, 3)
-        rotation_matrix, _ = cv2.Rodrigues(self.rvec)
-        sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
-        singular = sy < 1e-6
-        if not singular:
-            roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
-            pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-            yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
-        else:
-            roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
-            pitch = np.arctan2(-rotation_matrix[2, 0], sy)
-            yaw = 0.0
-
-        yaw_deg = np.degrees(yaw)
-        pitch_deg = np.degrees(pitch)
-        roll_deg = np.degrees(roll)
-
-        # Reproject 3D points to image plane
-        img_points, _ = cv2.projectPoints(axis_points_4, self.rvec, self.tvec, self.intrinsic_matrix, self.dist_coeffs)
+        img_points, _ = cv2.projectPoints(
+            axis_points_4, self.rvec, self.tvec,
+            self.intrinsic_matrix, self.dist_coeffs
+        )
         img_points = img_points.reshape(-1, 2).astype(int)
 
         origin = tuple(img_points[0])
         x_axis = tuple(img_points[1])
-        y_axis = tuple(img_points[2]) 
+        y_axis = tuple(img_points[2])
         z_axis = tuple(img_points[3])
-        
-        # visualize the axes(x, y, z) -> (red, green, blue)
-        cv2.arrowedLine(image, origin, x_axis, (0, 0, 255), 3)
-        cv2.arrowedLine(image, origin, y_axis, (0, 255, 0), 3)
-        cv2.arrowedLine(image, origin, z_axis, (255, 0, 0), 3)
-        cv2.putText(image, f"Yaw: {yaw_deg:.2f}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        cv2.putText(image, f"Pitch: {pitch_deg:.2f}", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(image, f"Roll: {roll_deg:.2f}", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        cv2.putText(image, f"X: {self.tvec[0]:.2f}m", (20, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (20, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+        if show_rotation:
+            rotation_matrix, _ = cv2.Rodrigues(self.rvec)
+            sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
+            singular = sy < 1e-6
+            if not singular:
+                roll = np.arctan2(rotation_matrix[2, 1], rotation_matrix[2, 2])
+                pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+                yaw = np.arctan2(rotation_matrix[1, 0], rotation_matrix[0, 0])
+            else:
+                roll = np.arctan2(-rotation_matrix[1, 2], rotation_matrix[1, 1])
+                pitch = np.arctan2(-rotation_matrix[2, 0], sy)
+                yaw = 0.0
+
+            yaw_deg = np.degrees(yaw)
+            pitch_deg = np.degrees(pitch)
+            roll_deg = np.degrees(roll)
+
+            # visualize the axes(x, y, z) -> (red, green, blue)
+            cv2.arrowedLine(image, origin, x_axis, (0, 0, 255), 3)
+            cv2.arrowedLine(image, origin, y_axis, (0, 255, 0), 3)
+            cv2.arrowedLine(image, origin, z_axis, (255, 0, 0), 3)
+            cv2.putText(image, f"Yaw: {yaw_deg:.2f}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(image, f"Pitch: {pitch_deg:.2f}", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(image, f"Roll: {roll_deg:.2f}", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+            cv2.putText(image, f"X: {self.tvec[0]:.2f}m", (20, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (20, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        else:
+            # 4点模式：仅显示位姿坐标，不绘制旋转轴与角度
+            cv2.putText(image, f"X: {self.tvec[0]:.2f}m", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
         return image
 
     def point_selector(self, points):

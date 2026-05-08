@@ -10,7 +10,7 @@ class ObjectDetector:
         self.target_list = []
 
     def detect(self, image):
-        self.results = self.model.predict(source=image, conf=0.85, iou=0.8, verbose=False)
+        self.results = self.model.predict(source=image, conf=0.86, iou=0.8, verbose=False)
         return self.results
     def get_target_list(self):
         self.target_list = []

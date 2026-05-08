@@ -1,8 +1,5 @@
-import asyncio
-import threading
 import time
 from collections import deque
-from queue import Queue, Empty
 from typing import Optional
 
 import cv2
@@ -10,7 +7,6 @@ import numpy as np
 from ultralytics import YOLO
 
 import config as cfg
-from io_threads import FrameGrabber, SerialSender
 from stereo_depth import StereoDepthEstimator, load_stereo_config, build_sgbm_params
 from vision_utils import find_black_center, classify_in_roi
 from tools import open_video_writers, open_serial_log
@@ -24,7 +20,7 @@ def _setup_camera():
     return cap
 
 
-async def process_stream():
+def process_stream():
     start_time = time.time()
     cap = _setup_camera()
 
@@ -35,17 +31,17 @@ async def process_stream():
 
     model = YOLO(cfg.WEIGHTS_PATH).to("cuda")
 
-    frame_queue: Queue = Queue(maxsize=1)
-    serial_queue: Optional[Queue] = Queue(maxsize=10) if cfg.SERIAL_ENABLED else None
-    stop_event = threading.Event()
-
-    grabber = FrameGrabber(cap, frame_queue, stop_event)
-    sender = None
-    if serial_queue is not None:
-        sender = SerialSender(cfg.SERIAL_PORT, cfg.SERIAL_BAUD, serial_queue, stop_event, enabled=True)
-    grabber.start()
-    if sender is not None:
-        sender.start()
+    # 串口直接初始化（不使用多线程）
+    ser = None
+    if cfg.SERIAL_ENABLED:
+        try:
+            import serial
+            ser = serial.Serial(cfg.SERIAL_PORT, cfg.SERIAL_BAUD, timeout=0.1)
+            time.sleep(2)  # 等待串口初始化
+            print(f"Serial port opened: {cfg.SERIAL_PORT}")
+        except Exception as e:
+            print(f"Failed to open serial port: {e}")
+            ser = None
 
     recent_distances = deque(maxlen=10)
     non_count = 0
@@ -59,16 +55,14 @@ async def process_stream():
             print("Video writers opened.")
             if cfg.SAVE_SERIAL_LOG:
                 serial_log, _ = open_serial_log(cfg.SAVE_PATH)
+
         while True:
-            imageIO_start_time = time.time()
-            try:
-                frame = frame_queue.get(timeout=0.5)
-            except Empty:
-                if stop_event.is_set():
-                    break
-                await asyncio.sleep(0)
-                continue
-            if frame is None:
+            loop_start_time = time.time()
+
+            # 直接读取帧（不使用多线程）
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to read frame or video ended.")
                 break
 
             frame = cv2.resize(frame, (cfg.WIDTH * 2, cfg.HEIGHT), interpolation=cv2.INTER_AREA)
@@ -78,29 +72,30 @@ async def process_stream():
             frame_right = cv2.flip(frame_right, -1)
 
             left_rect, right_rect = depth_estimator.rectify(frame_left, frame_right)
-            imageIO_end_time = time.time()
-            print(f"Image IO Time: {imageIO_end_time - imageIO_start_time:.4f}")
+
             if cfg.SAVE_OUTPUT and cfg.SAVE_RAW_VIDEO and raw_writer is not None:
                 raw_writer.write(left_rect)
+
             results = list(model.track(left_rect, persist=True, stream=False, conf=cfg.CONF))
 
             if not results or results[0].boxes.id is None:
                 non_count += 1
-                if cfg.SEND_ON_EMPTY and non_count % 5 == 0 and serial_queue is not None:
+                if cfg.SEND_ON_EMPTY and non_count % 5 == 0 and ser is not None:
                     serial_data = "[0.00,0.00,0.00,0.00,0.00,0.00]\r\n"
-                    serial_queue.put(serial_data)
+                    ser.write(serial_data.encode("utf-8"))
                     if serial_log is not None:
                         serial_log.write(f"{time.time():.3f} {serial_data}")
                 if cfg.SAVE_OUTPUT and cfg.SAVE_OUTPUT_VIDEO and out_writer is not None:
                     out_writer.write(left_rect)
+
                 end_time = time.time()
                 if cfg.SHOW_FPS:
-                    print(f"Total CostTime: {end_time - start_time:.4f}")
-                start_time = end_time
+                    print(f"Total CostTime: {end_time - loop_start_time:.4f}")
+
                 if cfg.SHOW_IMSHOW:
                     cv2.imshow(cfg.WINDOW_NAME, left_rect)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
-                        cv2.waitKey(0)
+                        break
                 continue
 
             annotated_frame = results[0].plot()
@@ -117,26 +112,17 @@ async def process_stream():
                 roi = left_rect[y1:y2, x1:x2]
                 roi_right = right_rect[y1:y2, x1:x2]
 
-                classify_start_time = time.time()
                 label, area = classify_in_roi(annotated_frame, x1, y1, x2, y2)
-                classify_end_time = time.time()
-                print(f"Classify Time: {classify_end_time - classify_start_time:.4f}")
 
-                findblack_start_time = time.time()
                 local_center = find_black_center(roi)
-                findblack_end_time = time.time()
-                print(f"Find Black Time: {findblack_end_time - findblack_start_time:.4f}")
 
                 if local_center is None:
                     continue
                 centerpoint = (local_center[0] + x1, local_center[1] + y1)
 
-                stereo_start_time = time.time()
                 disparity_roi = depth_estimator.compute_disparity(roi, roi_right)
                 disp_value = float(disparity_roi[local_center[1], local_center[0]])
                 cam_x, cam_y, dis = depth_estimator.project_to_3d(centerpoint[0], centerpoint[1], disp_value)
-                stereo_end_time = time.time()
-                print(f"Stereo Time: {stereo_end_time - stereo_start_time:.4f}")
 
                 recent_distances.append(dis)
                 smoothed_dis = float(np.mean(recent_distances))
@@ -154,9 +140,9 @@ async def process_stream():
                     y_serial = f"{(-cam_y):.2f}"
                     z_serial = f"{abs(dis):.2f}"
                     distance_serial = f"{(cam_x * cam_x + cam_y * cam_y + dis * dis) ** 0.5:.2f}"
-                    if serial_queue is not None:
+                    if ser is not None:
                         serial_data = f"[{x_serial},{y_serial},{z_serial},{distance_serial},{y_serial},{z_serial}]\r\n"
-                        serial_queue.put(serial_data)
+                        ser.write(serial_data.encode("utf-8"))
                         if serial_log is not None:
                             serial_log.write(f"{time.time():.3f} {serial_data}")
 
@@ -169,17 +155,19 @@ async def process_stream():
                 cv2.imshow(cfg.WINDOW_NAME, annotated_frame)
             if cfg.SAVE_OUTPUT and cfg.SAVE_OUTPUT_VIDEO and out_writer is not None:
                 out_writer.write(annotated_frame)
+
             end_time = time.time()
             if cfg.SHOW_FPS:
-                print(f"Total CostTime: {end_time - start_time:.4f}")
-            start_time = end_time
+                print(f"Total CostTime: {end_time - loop_start_time:.4f}")
 
             if cfg.SHOW_IMSHOW:
                 if cv2.waitKey(1) & 0xFF == ord("w"):
                     cv2.waitKey(0)
     finally:
-        stop_event.set()
         cap.release()
+        if ser is not None:
+            ser.close()
+            print("Serial port closed.")
         if raw_writer is not None:
             raw_writer.release()
         if out_writer is not None:
