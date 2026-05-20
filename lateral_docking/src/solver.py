@@ -29,32 +29,38 @@ class Solver:
         self.mode = 1 # 0: 4 points, 1: 5 points
 
     def solver(self, points):
-        # 如果多于4/5个点，则寻找最下方的5个点
-        # 基于图像y轴进行排序
+        """Solves PnP with the given image points.
+
+        Args:
+            points: List of (x, y) pixel coordinates.
+
+        Returns:
+            Tuple of (success, rvec, tvec).
+        """
         target_points = []
         if self.mode == 0:
             if len(points) >= 4:
-                cmp = lambda item: item[1]
-                points.sort(key=cmp)
+                points.sort(key=lambda item: item[1])
                 target_points = points[-4:]
-            elif(len(points) == 4):
-                target_points = points
             else:
                 print("Not enough points for 4-point PnP.")
                 return False, None, None
             success, rvec, tvec = self.solve_pnp(target_points)
-        if self.mode == 1:
+        elif self.mode == 1:
             if len(points) > 5:
-                cmp = lambda item: item[1]
-                points.sort(key=cmp)
+                points.sort(key=lambda item: item[1])
                 target_points = points[-5:]
-            elif(len(points) == 5):
+            elif len(points) == 5:
                 target_points = points
             else:
                 print("Not enough points for 5-point PnP.")
                 return False, None, None
             success, rvec, tvec = self.solve_pnp_5p(target_points)
-        if success == False:
+        else:
+            print(f"Unsupported solver mode: {self.mode}")
+            return False, None, None
+
+        if not success:
             print("PnP solving failed.")
         return success, rvec, tvec
 
@@ -110,25 +116,24 @@ class Solver:
             return success, None, None
 
     def visualize_pose(self, image, length=0.1, show_rotation=True):
-        # Reproject 3D points to image plane
-        axis_points_4 = np.float32([
-            [0, 0, 0],           # 原点
-            [length, 0, 0],      # X轴
-            [0, length, 0],      # Y轴
-            [0, 0, length]       # Z轴
-        ]).reshape(-1, 3)
-        img_points, _ = cv2.projectPoints(
-            axis_points_4, self.rvec, self.tvec,
-            self.intrinsic_matrix, self.dist_coeffs
-        )
-        img_points = img_points.reshape(-1, 2).astype(int)
-
-        origin = tuple(img_points[0])
-        x_axis = tuple(img_points[1])
-        y_axis = tuple(img_points[2])
-        z_axis = tuple(img_points[3])
-
         if show_rotation:
+            # Reproject 3D axes to image plane
+            axis_points_4 = np.float32([
+                [0, 0, 0],
+                [length, 0, 0],
+                [0, length, 0],
+                [0, 0, length]
+            ]).reshape(-1, 3)
+            img_points, _ = cv2.projectPoints(
+                axis_points_4, self.rvec, self.tvec,
+                self.intrinsic_matrix, self.dist_coeffs
+            )
+            img_points = img_points.reshape(-1, 2).astype(int)
+            origin = tuple(img_points[0])
+            x_axis = tuple(img_points[1])
+            y_axis = tuple(img_points[2])
+            z_axis = tuple(img_points[3])
+
             rotation_matrix, _ = cv2.Rodrigues(self.rvec)
             sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
             singular = sy < 1e-6
@@ -145,7 +150,6 @@ class Solver:
             pitch_deg = np.degrees(pitch)
             roll_deg = np.degrees(roll)
 
-            # visualize the axes(x, y, z) -> (red, green, blue)
             cv2.arrowedLine(image, origin, x_axis, (0, 0, 255), 3)
             cv2.arrowedLine(image, origin, y_axis, (0, 255, 0), 3)
             cv2.arrowedLine(image, origin, z_axis, (255, 0, 0), 3)
@@ -156,7 +160,6 @@ class Solver:
             cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (20, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (20, 185), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
         else:
-            # 4点模式：仅显示位姿坐标，不绘制旋转轴与角度
             cv2.putText(image, f"X: {self.tvec[0]:.2f}m", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             cv2.putText(image, f"Y: {self.tvec[1]:.2f}m", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(image, f"Z: {self.tvec[2]:.2f}m", (20, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)

@@ -19,6 +19,7 @@ uv.lock
 
 # Algorithm Test code
 Dev/
+docs/
 test*.py
 # local settings
 CLAUDE.md
