@@ -1,4 +1,4 @@
-## Prerequisites
+## Prerequisites 
 The program has been tested on the NVIDIA Jetson Orin NX (8GB RAM) developer kit running Ubuntu 22.04.
 - OpenCV 4.12.0
 - OpenCV-Contrib 4.12.0
