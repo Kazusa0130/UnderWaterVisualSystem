@@ -24,3 +24,4 @@ test*.py
 # local settings
 CLAUDE.md
 *.ps1
+.DS_Store

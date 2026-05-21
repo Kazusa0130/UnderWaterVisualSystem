@@ -1,4 +1,5 @@
-## Prerequisites 
+## Prerequisites
+
 The program has been tested on the NVIDIA Jetson Orin NX (8GB RAM) developer kit running Ubuntu 22.04.
 - OpenCV 4.12.0
 - OpenCV-Contrib 4.12.0
@@ -41,8 +42,8 @@ mkdir build && cd build
 make -j$(nproc)
 sudo make install
 ```
-    
-    
+
+​    
 
 - Future implementations will attempt to utilize the FetchContent module for integrating third-party libraries.
 
@@ -51,3 +52,5 @@ sudo make install
 ## Test Environment
 
 ![测试环境](./.assets/image.png)
+
+![整体架构图](./.assets/architecture.png)
