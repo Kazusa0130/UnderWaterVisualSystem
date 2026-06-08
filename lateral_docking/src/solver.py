@@ -12,24 +12,27 @@ class Solver:
         self.obj_width = obj_width
         self.obj_length = obj_length
         self.obj_points = np.array([
-            (-self.obj_width/2, -self.obj_length/2, 0),
-            (-self.obj_width/2,  self.obj_length/2, 0),
-            ( self.obj_width/2,  self.obj_length/2, 0),
-            ( self.obj_width/2, -self.obj_length/2, 0),
+            (-0.100, -0.300, 0.000),   # 左上
+            ( 0.100, -0.300, 0.000),   # 右上
+            ( 0.245,  0.300, 0.000),   # 右下
+            (-0.245,  0.300, 0.000),   # 左下
         ])
         self.obj_points_5 = np.array([
-            (-self.obj_width/2, -self.obj_length/2, 0),
-            (-self.obj_width/2,  self.obj_length/2, 0),
-            ( self.obj_width/2,  self.obj_length/2, 0),
-            ( self.obj_width/2, -self.obj_length/2, 0),
+            (-0.100, -0.300, 0.000),   # 左上
+            ( 0.100, -0.300, 0.000),   # 右上
+            ( 0.245,  0.300, 0.000),   # 右下
+            (-0.245,  0.300, 0.000),   # 左下
             (0, 0, -0.98)
         ])
         self.tvec = None
         self.rvec = None
-        self.mode = 1 # 0: 4 points, 1: 5 points
+        self.mode = 0 # 0: 4 points, 1: 5 points
 
     def solver(self, points):
         """Solves PnP with the given image points.
+
+        Automatically selects 4-point or 5-point mode based on the number
+        of detected points.
 
         Args:
             points: List of (x, y) pixel coordinates.
@@ -38,15 +41,8 @@ class Solver:
             Tuple of (success, rvec, tvec).
         """
         target_points = []
-        if self.mode == 0:
-            if len(points) >= 4:
-                points.sort(key=lambda item: item[1])
-                target_points = points[-4:]
-            else:
-                print("Not enough points for 4-point PnP.")
-                return False, None, None
-            success, rvec, tvec = self.solve_pnp(target_points)
-        elif self.mode == 1:
+        if len(points) >= 5:
+            self.mode = 1
             if len(points) > 5:
                 points.sort(key=lambda item: item[1])
                 target_points = points[-5:]
@@ -56,8 +52,12 @@ class Solver:
                 print("Not enough points for 5-point PnP.")
                 return False, None, None
             success, rvec, tvec = self.solve_pnp_5p(target_points)
+        elif len(points) == 4:
+            self.mode = 0
+            target_points = points
+            success, rvec, tvec = self.solve_pnp(target_points)
         else:
-            print(f"Unsupported solver mode: {self.mode}")
+            print("Not enough points for PnP (need at least 4).")
             return False, None, None
 
         if not success:
@@ -202,7 +202,7 @@ class Solver:
             center_point = np.array(points[4])
         angles = []
         for tmp_point in tmp_points:
-            angle = np.arctan2(tmp_point[1] - center[1], 
+            angle = np.arctan2(tmp_point[1] - center[1],
                                tmp_point[0] - center[0])
             angles.append(angle)
 
@@ -211,3 +211,40 @@ class Solver:
         if self.mode == 1:
             sorted_points = np.vstack([sorted_points, center_point])
         return sorted_points
+
+    def get_camera_pose_in_target_frame(
+        self,
+        rvec: np.ndarray | None = None,
+        tvec: np.ndarray | None = None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Calculate camera pose in target coordinate frame.
+
+        OpenCV solvePnP returns rvec, tvec representing target pose in camera
+        frame. This method converts to camera pose in target frame, consistent
+        with the ``target-as-origin`` visualization mode in
+        :class:`visualizer_3d.PoseVisualizer3D`.
+
+        Args:
+            rvec: Target rotation vector in camera frame (3,). Uses
+                :attr:`self.rvec` if None.
+            tvec: Target translation vector in camera frame (3,). Uses
+                :attr:`self.tvec` if None.
+
+        Returns:
+            Tuple of ``(rvec_cam, tvec_cam)`` where:
+                - ``rvec_cam``: Rotation vector of camera in target frame.
+                - ``tvec_cam``: Position of camera in target frame.
+            Returns ``(None, None)`` if inputs are invalid.
+        """
+        if rvec is None:
+            rvec = self.rvec
+        if tvec is None:
+            tvec = self.tvec
+        if rvec is None or tvec is None:
+            return None, None
+
+        R_target_to_cam, _ = cv2.Rodrigues(np.array(rvec).flatten())
+        R_cam_to_target = R_target_to_cam.T
+        rvec_cam, _ = cv2.Rodrigues(R_cam_to_target)
+        tvec_cam = -R_cam_to_target @ np.array(tvec).flatten()
+        return rvec_cam.flatten(), tvec_cam.flatten()

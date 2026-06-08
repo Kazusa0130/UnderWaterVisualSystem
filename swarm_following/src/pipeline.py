@@ -148,7 +148,7 @@ def process_stream():
 
                 cv2.putText(annotated_frame, f"x: {centerpoint[0]}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
                 cv2.putText(annotated_frame, f"y: {centerpoint[1]}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-                cv2.putText(annotated_frame, f"cls:{label} area:{area}", (x1, max(0, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2,)
+                cv2.putText(annotated_frame, f"cls:{label} area:{area}", (x1, max(0, y1 - 16)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2,)
                 cv2.circle(annotated_frame, centerpoint, 5, (0, 0, 255), -1)
 
             if cfg.SHOW_IMSHOW:

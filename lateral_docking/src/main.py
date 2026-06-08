@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import time
+import sys
 
 from detector import ObjectDetector
 from solver import Solver
@@ -15,6 +16,10 @@ from config import (
     FLIP,
     OBJ_WIDTH,
     OBJ_LENGTH,
+    SHOW_ROTATION_FOR_4POINT,
+    SERIAL_ENABLED,
+    SERIAL_PORT,
+    SERIAL_BAUD,
 )
 
 
@@ -79,6 +84,11 @@ def main() -> None:
         config_path=CONFIG_PATH, obj_width=OBJ_WIDTH, obj_length=OBJ_LENGTH
     )
     cap = cv2.VideoCapture(VIDEO_PATH)
+    if sys.platform.startswith("linux"):
+        cap.set(cv2.CAP_PROP_BUFFERSIZE,1)
+        cap.set(cv2.CAP_PROP_FPS, 20)
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+        cap.set(cv2.CAP_PROP_EXPOSURE, 100)
 
     raw_data_count, output_data_count, traj_data_count = (
         count_files_in_directory(SAVE_PATH)
@@ -111,6 +121,18 @@ def main() -> None:
         print("Unable to open video:", VIDEO_PATH)
         return
 
+    # Serial port initialization (referencing swarm_following pattern).
+    ser = None
+    if SERIAL_ENABLED:
+        try:
+            import serial
+            ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0.1)
+            time.sleep(2)  # Wait for serial port initialization
+            print(f"Serial port opened: {SERIAL_PORT}")
+        except Exception as e:
+            print(f"Failed to open serial port: {e}")
+            ser = None
+
     start_timestamp = time.time()
     frame_id = 0
 
@@ -138,7 +160,10 @@ def main() -> None:
             left, out_frame
         )
 
+        # Pose in camera frame (target relative to camera) - used for 2D viz
         rvec, tvec = None, None
+        # Pose in target frame (camera relative to target) - used for serial/log
+        rvec_cam, tvec_cam = None, None
         is_valid = False
 
         if len(center_points) >= 4:
@@ -148,20 +173,50 @@ def main() -> None:
                 tvec = tvec_raw.flatten()
                 rvec = rvec_raw.flatten()
 
-                msg = (
-                    f"{tvec[0]:.2f},{tvec[1]:.2f},{tvec[2]:.2f},"
-                    f" {rvec[0]:.2f},{rvec[1]:.2f},{rvec[2]:.2f}\r\n"
+                # Convert to camera pose in target frame for serial/log output
+                rvec_cam, tvec_cam = solver.get_camera_pose_in_target_frame(
+                    rvec, tvec
                 )
-                print("Pose:", msg.strip())
 
-        # Save trajectory data.
+                if tvec_cam is not None and rvec_cam is not None:
+                    msg = (
+                        f"[{tvec_cam[0]:.2f},{tvec_cam[1]:.2f},{tvec_cam[2]:.2f},"
+                        f"{rvec_cam[0]:.2f},{rvec_cam[1]:.2f},{rvec_cam[2]:.2f},"
+                        f"{solver.mode}]\r\n"
+                    )
+                    print("Pose (cam in target):", msg.strip())
+
+                    # Serial output (camera pose in target frame).
+                    if ser is not None:
+                        try:
+                            ser.write(msg.encode("utf-8"))
+                        except Exception as e:
+                            print(f"Serial write failed: {e}")
+            else:
+                # No valid pose: send zero values via serial.
+                if ser is not None:
+                    try:
+                        zero_msg = f"[0.00,0.00,0.00,0.00,0.00,0.00,{solver.mode}]\r\n"
+                        ser.write(zero_msg.encode("utf-8"))
+                    except Exception as e:
+                        print(f"Serial write failed: {e}")
+        else:
+            # Not enough points: send zero values via serial.
+            if ser is not None:
+                try:
+                    zero_msg = f"[0.00,0.00,0.00,0.00,0.00,0.00,{solver.mode}]\r\n"
+                    ser.write(zero_msg.encode("utf-8"))
+                except Exception as e:
+                    print(f"Serial write failed: {e}")
+
+        # Save trajectory data (camera pose in target frame).
         if SAVE_OUTPUT and traj_file is not None:
             timestamp = time.time() - start_timestamp
-            if rvec is not None and tvec is not None:
+            if rvec_cam is not None and tvec_cam is not None:
                 traj_file.write(
                     f"{timestamp:.6f},{frame_id},"
-                    f"{tvec[0]:.6f},{tvec[1]:.6f},{tvec[2]:.6f},"
-                    f"{rvec[2]:.6f},{rvec[1]:.6f},{rvec[0]:.6f}\n"
+                    f"{tvec_cam[0]:.6f},{tvec_cam[1]:.6f},{tvec_cam[2]:.6f},"
+                    f"{rvec_cam[2]:.6f},{rvec_cam[1]:.6f},{rvec_cam[0]:.6f}\n"
                 )
                 traj_file.flush()
             else:
@@ -178,7 +233,7 @@ def main() -> None:
             tvec=tvec,
             solver=solver,
             is_valid=is_valid,
-            show_rotation=(solver.mode == 1),
+            show_rotation=(solver.mode == 1 or (solver.mode == 0 and SHOW_ROTATION_FOR_4POINT)),
         )
 
         if DEBUG:
@@ -204,6 +259,11 @@ def main() -> None:
                 f"Trajectory data saved to "
                 f"{SAVE_PATH}traj_data/traj_{traj_data_count}.csv"
             )
+
+    # Close serial port.
+    if ser is not None:
+        ser.close()
+        print("Serial port closed.")
 
     cap.release()
     cv2.destroyAllWindows()

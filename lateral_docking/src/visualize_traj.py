@@ -93,10 +93,10 @@ def visualize_3d_trajectory(
 
         # Draw target plane
         corners = np.array([
-            [-OBJ_WIDTH / 2, -OBJ_LENGTH / 2, 0],
-            [-OBJ_WIDTH / 2, OBJ_LENGTH / 2, 0],
-            [OBJ_WIDTH / 2, OBJ_LENGTH / 2, 0],
-            [OBJ_WIDTH / 2, -OBJ_LENGTH / 2, 0]
+            [-0.100, -0.300, 0.000],   # 左上
+            [ 0.100, -0.300, 0.000],   # 右上
+            [ 0.245,  0.300, 0.000],   # 右下
+            [-0.245,  0.300, 0.000],   # 左下
         ])
         edges = [[0, 1], [1, 2], [2, 3], [3, 0]]
         for edge in edges:

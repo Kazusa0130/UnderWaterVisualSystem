@@ -1,4 +1,4 @@
-"""LED array detector integrating YOLO and traditional center-point methods."""
+"""LED array detector using YOLO only."""
 
 from typing import List, Tuple, Optional
 
@@ -7,20 +7,18 @@ import numpy as np
 from ultralytics import YOLO
 
 from config import (
-    CENTER_POINT_MODE,
     DEBUG,
     YOLO_CENTER_CLASS_ID,
     YOLO_CORNER_CLASS_ID,
 )
-from red_led_detector import TargetPointDetector
 
 
 class ObjectDetector:
-    """Detects underwater LED targets using YOLO or traditional red-LED methods.
+    """Detects underwater LED targets using YOLO only.
 
-    This class wraps the YOLO model and optionally falls back to a traditional
-    image-processing-based red LED detector for the center point. The detection
-    mode is controlled by :data:`config.CENTER_POINT_MODE`.
+    This class wraps the YOLO model to detect corner points and optionally
+    a center point. If a center point is detected alongside 4 corners,
+    5-point PnP mode is used; otherwise 4-point PnP mode is used.
     """
 
     def __init__(self, model_path: str = "yolov8n.pt", debug: bool = False) -> None:
@@ -35,7 +33,6 @@ class ObjectDetector:
         self.model.to("cuda")
         self.results = None
         self._raw_targets: List[List] = []
-        self._red_detector = TargetPointDetector()
 
     def detect(self, image: np.ndarray) -> None:
         """Runs YOLO inference on the input image.
@@ -44,7 +41,7 @@ class ObjectDetector:
             image: Input BGR image.
         """
         self.results = self.model.predict(
-            source=image, conf=0.1, iou=0.6, verbose=False
+            source=image, conf=0.1, iou=0.8, verbose=False
         )
         self._parse_results()
 
@@ -79,14 +76,10 @@ class ObjectDetector:
         image: np.ndarray,
         vis_frame: np.ndarray,
     ) -> Tuple[List[Tuple[int, int]], int, np.ndarray]:
-        """Extracts the final point list for PnP solving.
-
-        Depending on :data:`CENTER_POINT_MODE`, this either uses YOLO class
-        separation or the traditional red-LED detector to identify the center
-        point.
+        """Extracts the final point list for PnP solving using YOLO only.
 
         Args:
-            image: Original BGR image (used for traditional mode).
+            image: Original BGR image (kept for API compatibility).
             vis_frame: Frame to draw annotations on.
 
         Returns:
@@ -96,29 +89,7 @@ class ObjectDetector:
                   indicates that not enough points were found.
                 - vis_frame: Annotated visualization frame.
         """
-        # Step 1: Always use YOLO for corner points first.
         points, mode, vis_frame = self._extract_yolo_points(vis_frame)
-
-        # Step 2: If YOLO provides 4 corners but no centre, fall back to the
-        # traditional red-LED detector for the centre point.
-        if mode == 0 and len(points) >= 4:
-            red_targets = self._red_detector.detect_all(image)
-            if red_targets:
-                rx, ry = red_targets[0]["center"]
-                if self._is_center_in_corners((rx, ry), points):
-                    points.append((rx, ry))
-                    mode = 1
-                    if self.debug:
-                        print(
-                            f"Traditional center detected at ({rx}, {ry}), "
-                            f"using 5-point PnP."
-                        )
-                elif self.debug:
-                    print(
-                        f"Traditional center at ({rx}, {ry}) is outside "
-                        f"corner region, using 4-point PnP."
-                    )
-
         vis_frame = self._draw_selected_points(vis_frame, points, mode)
         return points, mode, vis_frame
 
@@ -271,73 +242,6 @@ class ObjectDetector:
         if self.debug:
             print("Not enough corner points detected.")
         return points, -1, vis_frame
-
-    def _extract_traditional_points(
-        self,
-        image: np.ndarray,
-        vis_frame: np.ndarray,
-    ) -> Tuple[List[Tuple[int, int]], int, np.ndarray]:
-        """Extracts points using the traditional red-LED detector (mode 0).
-
-        Args:
-            image: Original BGR image for red-LED detection.
-            vis_frame: Frame to draw annotations on.
-
-        Returns:
-            See :meth:`get_points`.
-        """
-        # Filter out YOLO center-class boxes to avoid interference.
-        corner_targets: List[List] = []
-        for conf, box, cls_id in self._raw_targets:
-            if cls_id == YOLO_CENTER_CLASS_ID:
-                continue
-            corner_targets.append([conf, box])
-
-        # Detect the red LED center using the traditional method.
-        red_targets = self._red_detector.detect_all(image)
-
-        # Remove YOLO boxes that overlap with the red LED.
-        if red_targets:
-            rx, ry = red_targets[0]["center"]
-            filtered: List[List] = []
-            for conf, box in corner_targets:
-                x1, y1, x2, y2 = map(int, box)
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                dist = ((cx - rx) ** 2 + (cy - ry) ** 2) ** 0.5
-                if dist < 10:
-                    if self.debug:
-                        print(
-                            f"Filtering YOLO box at "
-                            f"({cx},{cy}) overlapping with red LED"
-                        )
-                    continue
-                filtered.append([conf, box])
-            corner_targets = filtered
-
-        if len(corner_targets) < 4:
-            if self.debug:
-                print("Not enough points detected.")
-            return [], -1, vis_frame
-
-        points: List[Tuple[int, int]] = []
-        for conf, box in corner_targets:
-            x1, y1, x2, y2 = map(int, box)
-            points.append(((x1 + x2) // 2, (y1 + y2) // 2))
-
-        if red_targets:
-            rx, ry = red_targets[0]["center"]
-            points.append((rx, ry))
-
-            if self.debug:
-                print(
-                    f"Red LED detected at ({rx}, {ry}), "
-                    f"using 5-point PnP."
-                )
-            return points, 1, vis_frame
-
-        if self.debug:
-            print("No red LED detected, using 4-point PnP.")
-        return points, 0, vis_frame
 
     @staticmethod
     def _draw_yolo_center(
