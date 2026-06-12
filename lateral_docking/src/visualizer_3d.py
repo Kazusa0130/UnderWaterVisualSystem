@@ -6,10 +6,13 @@ for underwater robotics applications. It supports two visualization modes:
 - Camera as origin: Shows target pose relative to the camera
 
 Coordinate System:
-    Uses OpenCV camera coordinate convention throughout:
-    - X axis: points to the right
-    - Y axis: points downward
-    - Z axis: points forward (into the scene, along the optical axis)
+    Uses physical target frame convention:
+    - X axis: points to the right (along target width)
+    - Y axis: points upward (against gravity, along target height)
+    - Z axis: points toward the camera (normal to target plane)
+
+    This is transformed from the raw OpenCV PnP result which uses
+    X=right, Y=down, Z=forward (into the scene).
 
 Typical usage example:
     visualizer = PoseVisualizer3D(
@@ -17,7 +20,7 @@ Typical usage example:
         view_angle=(20, -45),
         origin_mode="target"
     )
-    visualizer.update(rvec, tvec, obj_width=0.46, obj_length=0.60)
+    visualizer.update(rvec, tvec, obj_corners=DEFAULT_OBJ_CORNERS)
     visualizer.close()
 
 Author: BJTU Underwater Robotics Team
@@ -43,6 +46,15 @@ DEFAULT_FOV_H = 60  # Horizontal field of view in degrees
 DEFAULT_FOV_V = 45  # Vertical field of view in degrees
 DEFAULT_FRUSTUM_DEPTH = 0.3
 MAX_HISTORY_LENGTH = 100
+
+# Actual target object corner coordinates in physical target frame
+# (Y-up, Z-toward-camera; matches the transformed solver.py obj_points)
+DEFAULT_OBJ_CORNERS = np.array([
+    [-0.100,  0.300, 0.000],   # 左上
+    [ 0.100,  0.300, 0.000],   # 右上
+    [ 0.245, -0.300, 0.000],   # 右下
+    [-0.245, -0.300, 0.000],   # 左下
+])
 
 # Color schemes
 COLOR_X_AXIS = 'red'
@@ -218,12 +230,14 @@ class PoseVisualizer3D:
     ) -> None:
         """Draw camera frustum (viewing pyramid).
 
-        Uses OpenCV camera coordinate convention: X right, Y down, Z forward.
-        The frustum extends along the positive Z axis (camera viewing direction).
+        The frustum is defined in the camera's local frame (OpenCV convention:
+        X right, Y down, Z forward) and then transformed to the physical target
+        frame by ``rotation_matrix``.
 
         Args:
             position: Camera position in world coordinates (3,).
-            rotation_matrix: Camera rotation matrix (3, 3) from camera to world.
+            rotation_matrix: Camera rotation matrix (3, 3) from camera frame to
+                physical target frame.
             color: Color for the frustum.
             alpha: Transparency value [0, 1].
         """
@@ -294,8 +308,7 @@ class PoseVisualizer3D:
         self,
         rotation_world: np.ndarray,
         translation: Union[np.ndarray, Sequence[float]],
-        width: float,
-        length: float,
+        obj_corners: Optional[np.ndarray] = None,
         color: str = COLOR_TARGET_PLANE,
         alpha: float = 0.3
     ) -> None:
@@ -304,18 +317,15 @@ class PoseVisualizer3D:
         Args:
             rotation_world: Target-to-world rotation matrix (3, 3).
             translation: Translation vector (3,) in world coordinates.
-            width: Object width in meters.
-            length: Object length in meters.
+            obj_corners: Object corner coordinates in target frame (N, 3).
+                Defaults to DEFAULT_OBJ_CORNERS if None.
             color: Color for the target plane.
             alpha: Transparency value [0, 1].
         """
-        # Target corners in target coordinates
-        corners_target = np.array([
-            [-width / 2, -length / 2, 0],
-            [-width / 2, length / 2, 0],
-            [width / 2, length / 2, 0],
-            [width / 2, -length / 2, 0]
-        ])
+        if obj_corners is None:
+            obj_corners = DEFAULT_OBJ_CORNERS
+
+        corners_target = np.asarray(obj_corners).reshape(-1, 3)
 
         # Transform to world coordinates
         if self.origin_mode == "target":
@@ -352,18 +362,19 @@ class PoseVisualizer3D:
         tvec: np.ndarray,
         rvec: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Calculate camera pose in target coordinate frame.
+        """Calculate camera pose in physical target coordinate frame.
 
         OpenCV PnP returns rvec, tvec representing target pose in camera frame.
-        This method converts to camera pose in target frame.
+        This method converts to camera pose in the physical target frame where
+        Y points up and Z points toward the camera.
 
         Args:
             tvec: Target translation in camera frame (3,).
             rvec: Target rotation in camera frame (3,).
 
         Returns:
-            Tuple of (camera_position, camera_rotation) in target frame.
-            Uses OpenCV convention: X right, Y down, Z forward.
+            Tuple of (camera_position, camera_rotation) in physical target frame.
+            Physical frame: X=right, Y=up, Z=toward-camera.
         """
         # rvec describes rotation from target to camera coordinates
         r_target_to_cam = self._rotation_matrix_from_rvec(rvec)
@@ -371,14 +382,20 @@ class PoseVisualizer3D:
         r_cam_to_target = r_target_to_cam.T
         # Camera position in target frame: -R^T * tvec
         camera_pos = -r_cam_to_target @ tvec
+
+        # Transform from image-based frame (Y-down, Z-away) to physical frame
+        # (Y-up, Z-toward-camera)
+        T = np.diag([1.0, -1.0, -1.0])
+        camera_pos = T @ camera_pos
+        r_cam_to_target = T @ r_cam_to_target
+
         return camera_pos, r_cam_to_target
 
     def _draw_target_as_origin_mode(
         self,
         rvec: Optional[np.ndarray],
         tvec: Optional[np.ndarray],
-        obj_width: Optional[float],
-        obj_length: Optional[float],
+        obj_corners: Optional[np.ndarray],
         history: Optional[Sequence[np.ndarray]],
         is_valid: bool
     ) -> None:
@@ -387,8 +404,7 @@ class PoseVisualizer3D:
         Args:
             rvec: Target rotation in camera frame (3,).
             tvec: Target translation in camera frame (3,).
-            obj_width: Object width in meters.
-            obj_length: Object length in meters.
+            obj_corners: Object corner coordinates in target frame (N, 3).
             history: Sequence of historical camera positions.
             is_valid: Whether current pose is valid.
         """
@@ -409,12 +425,11 @@ class PoseVisualizer3D:
         )
 
         # Draw target plane
-        if obj_width is not None and obj_length is not None:
+        if obj_corners is not None:
             self._draw_target_plane(
                 np.eye(3),
                 [0, 0, 0],
-                obj_width,
-                obj_length,
+                obj_corners=obj_corners,
                 color=COLOR_TARGET_PLANE,
                 alpha=0.3
             )
@@ -505,8 +520,7 @@ class PoseVisualizer3D:
         self,
         rvec: Optional[np.ndarray],
         tvec: Optional[np.ndarray],
-        obj_width: Optional[float],
-        obj_length: Optional[float],
+        obj_corners: Optional[np.ndarray],
         history: Optional[Sequence[np.ndarray]],
         is_valid: bool
     ) -> None:
@@ -515,8 +529,7 @@ class PoseVisualizer3D:
         Args:
             rvec: Target rotation in camera frame (3,).
             tvec: Target translation in camera frame (3,).
-            obj_width: Object width in meters.
-            obj_length: Object length in meters.
+            obj_corners: Object corner coordinates in target frame (N, 3).
             history: Sequence of historical target positions.
             is_valid: Whether current pose is valid.
         """
@@ -541,12 +554,11 @@ class PoseVisualizer3D:
             )
 
             # Draw target plane
-            if obj_width is not None and obj_length is not None:
+            if obj_corners is not None:
                 self._draw_target_plane(
                     r_target_to_cam,
                     tvec,
-                    obj_width,
-                    obj_length,
+                    obj_corners=obj_corners,
                     color=target_color,
                     alpha=0.3
                 )
@@ -619,8 +631,7 @@ class PoseVisualizer3D:
         self,
         rvec: Optional[Union[np.ndarray, Sequence[float]]] = None,
         tvec: Optional[Union[np.ndarray, Sequence[float]]] = None,
-        obj_width: Optional[float] = None,
-        obj_length: Optional[float] = None,
+        obj_corners: Optional[np.ndarray] = None,
         history_camera_positions: Optional[Sequence[np.ndarray]] = None,
         is_valid: bool = True
     ) -> None:
@@ -629,8 +640,8 @@ class PoseVisualizer3D:
         Args:
             rvec: Target rotation vector in camera frame (3,).
             tvec: Target translation vector in camera frame (3,).
-            obj_width: Object width in meters.
-            obj_length: Object length in meters.
+            obj_corners: Object corner coordinates in target frame (N, 3).
+                Defaults to DEFAULT_OBJ_CORNERS if None.
             history_camera_positions: Historical positions for trajectory display.
             is_valid: Whether current pose is valid (affects color coding).
         """
@@ -646,8 +657,7 @@ class PoseVisualizer3D:
             self._draw_target_as_origin_mode(
                 rvec_arr,
                 tvec_arr,
-                obj_width,
-                obj_length,
+                obj_corners,
                 history_camera_positions,
                 is_valid
             )
@@ -655,8 +665,7 @@ class PoseVisualizer3D:
             self._draw_camera_as_origin_mode(
                 rvec_arr,
                 tvec_arr,
-                obj_width,
-                obj_length,
+                obj_corners,
                 history_camera_positions,
                 is_valid
             )
@@ -732,8 +741,7 @@ def _test_visualizer() -> None:
         visualizer.update(
             rvec=rvec,
             tvec=tvec,
-            obj_width=0.46,
-            obj_length=0.60,
+            obj_corners=DEFAULT_OBJ_CORNERS,
             history_camera_positions=history
         )
         time.sleep(0.05)

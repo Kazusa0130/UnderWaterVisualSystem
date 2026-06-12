@@ -27,6 +27,7 @@ from mpl_toolkits.mplot3d import Axes3D  # pylint: disable=unused-import
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tools import get_latest_traj_file, parse_traj_file
+from solver import Solver
 from config import SAVE_PATH, OBJ_WIDTH, OBJ_LENGTH
 
 
@@ -39,6 +40,31 @@ COLOR_TRAJECTORY_INVALID = 'gray'
 COLOR_START_POINT = 'green'
 COLOR_END_POINT = 'red'
 COLOR_TARGET_PLANE = 'cyan'
+
+# Abnormal-pose handling: frames whose camera-Z in the output frame O is
+# negative mean the target solved to behind the camera (a bad PnP solution).
+# These are kept but de-emphasized (drawn faded gray) rather than dropped.
+COLOR_TRAJECTORY_ABNORMAL = 'gray'
+ABNORMAL_ALPHA = 0.25
+
+
+def compute_abnormal_mask(tvecs: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    """Flag valid frames whose output-frame camera-Z is negative.
+
+    In the output frame O, Z points toward the camera and a normal docking
+    pose has Z > 0. A negative Z means the solver placed the target behind the
+    camera, which is physically impossible for a real observation and is
+    treated as an abnormal (faded) frame.
+
+    Args:
+        tvecs: Camera positions in the output frame (N, 3).
+        valid_mask: Boolean array marking frames that carry pose data.
+
+    Returns:
+        Boolean array (N,) that is True for valid-but-abnormal frames.
+    """
+    tvecs = np.asarray(tvecs, dtype=float)
+    return valid_mask & (tvecs[:, 2] < 0.0)
 
 
 def visualize_3d_trajectory(
@@ -69,19 +95,15 @@ def visualize_3d_trajectory(
     ax = fig.add_subplot(111, projection='3d')
 
     if origin_mode == "target":
-        # Calculate camera positions in target frame
-        camera_positions = []
-        for i in range(len(tvecs)):
-            if valid_mask[i]:
-                rvec = rvecs[i]
-                tvec = tvecs[i]
-                R_target_to_cam, _ = cv2.Rodrigues(rvec)
-                R_cam_to_target = R_target_to_cam.T
-                camera_pos = -R_cam_to_target @ tvec
-                camera_positions.append(camera_pos)
-            else:
-                camera_positions.append([np.nan, np.nan, np.nan])
-        camera_positions = np.array(camera_positions)
+        # Trajectory data is already in camera-pose-in-target-frame format
+        # (tvecs = camera position in target frame, rvecs = camera rotation in target frame)
+        camera_positions = np.array(tvecs, dtype=float)
+        # Mark invalid positions as NaN so they don't get plotted
+        camera_positions[~valid_mask] = np.nan
+
+        # Split valid frames into normal vs abnormal (faded) sets.
+        abnormal_mask = compute_abnormal_mask(tvecs, valid_mask)
+        normal_mask = valid_mask & ~abnormal_mask
 
         # Draw target coordinate system at origin
         axis_length = 0.3
@@ -91,12 +113,12 @@ def visualize_3d_trajectory(
             ax.quiver(0, 0, 0, axis[0], axis[1], axis[2],
                      color=color, arrow_length_ratio=0.2, linewidth=2)
 
-        # Draw target plane
+        # Draw target plane (physical frame: Y-up, Z-toward-camera)
         corners = np.array([
-            [-0.100, -0.300, 0.000],   # 左上
-            [ 0.100, -0.300, 0.000],   # 右上
-            [ 0.245,  0.300, 0.000],   # 右下
-            [-0.245,  0.300, 0.000],   # 左下
+            [-0.100,  0.300, 0.000],   # 左上
+            [ 0.100,  0.300, 0.000],   # 右上
+            [ 0.245, -0.300, 0.000],   # 右下
+            [-0.245, -0.300, 0.000],   # 左下
         ])
         edges = [[0, 1], [1, 2], [2, 3], [3, 0]]
         for edge in edges:
@@ -104,13 +126,21 @@ def visualize_3d_trajectory(
             ax.plot3D(points[:, 0], points[:, 1], points[:, 2],
                      color=COLOR_TARGET_PLANE, linewidth=2, alpha=0.8)
 
-        # Draw camera trajectory
-        valid_positions = camera_positions[valid_mask]
-        if len(valid_positions) > 0:
-            ax.plot3D(valid_positions[:, 0], valid_positions[:, 1], valid_positions[:, 2],
+        # Draw camera trajectory (normal frames in color, abnormal faded gray)
+        normal_positions = camera_positions[normal_mask]
+        if len(normal_positions) > 0:
+            ax.plot3D(normal_positions[:, 0], normal_positions[:, 1], normal_positions[:, 2],
                      color=COLOR_TRAJECTORY_VALID, linewidth=2, label='Camera Trajectory')
-            ax.scatter(*valid_positions[0], c=COLOR_START_POINT, marker='o', s=100, label='Start')
-            ax.scatter(*valid_positions[-1], c=COLOR_END_POINT, marker='s', s=100, label='End')
+            ax.scatter(*normal_positions[0], c=COLOR_START_POINT, marker='o', s=100, label='Start')
+            ax.scatter(*normal_positions[-1], c=COLOR_END_POINT, marker='s', s=100, label='End')
+
+        # Abnormal frames (output-frame Z < 0): faded gray scatter, no solid line.
+        abnormal_positions = np.array(tvecs, dtype=float)[abnormal_mask]
+        if len(abnormal_positions) > 0:
+            ax.scatter(abnormal_positions[:, 0], abnormal_positions[:, 1],
+                       abnormal_positions[:, 2], c=COLOR_TRAJECTORY_ABNORMAL,
+                       marker='x', s=30, alpha=ABNORMAL_ALPHA,
+                       label='Abnormal (Z<0)')
 
         # Draw camera poses along trajectory (ORB-SLAM style frustum)
         if pose_interval > 0:
@@ -127,7 +157,9 @@ def visualize_3d_trajectory(
                 [-img_w / 2, img_h / 2, focal_len],
             ])
 
-            valid_indices = np.where(valid_mask)[0]
+            # Only draw frustums for normal frames; abnormal ones are shown
+            # as faded scatter only.
+            valid_indices = np.where(normal_mask)[0]
 
             # Select indices based on distance threshold or frame interval
             if pose_distance_threshold is not None and pose_distance_threshold > 0:
@@ -145,9 +177,11 @@ def visualize_3d_trajectory(
                 selected_indices = valid_indices[::pose_interval] if pose_interval > 0 else []
 
             for idx in selected_indices:
+                # rvecs[idx] stores docking [roll, pitch, yaw] (rad), output frame
                 rvec = rvecs[idx]
-                R_target_to_cam, _ = cv2.Rodrigues(rvec)
-                R_cam_to_target = R_target_to_cam.T
+                R_cam_to_target = Solver.docking_euler_to_rotation_output(
+                    rvec[0], rvec[1], rvec[2]
+                )
                 pos = camera_positions[idx]
 
                 # Transform frustum vertices to target frame
@@ -166,15 +200,33 @@ def visualize_3d_trajectory(
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
-        ax.set_title('3D Trajectory Visualization (Target as Origin)')
+        ax.set_title('3D Trajectory Visualization (Target as Origin, Physical Frame)')
 
-        # Set initial view for OpenCV coordinate intuition (X right, Y down, Z forward)
-        # View from front-right-top to clearly show camera approach along Z axis
+        # Set initial view for physical target frame (X right, Y up, Z toward camera)
         ax.view_init(elev=20, azim=-60)
 
     else:
         # Camera as origin mode
-        valid_positions = tvecs[valid_mask]
+        # Trajectory data is camera-pose-in-target-frame, need to convert to
+        # target-pose-in-camera-frame for display
+        target_positions = []
+        for i in range(len(tvecs)):
+            if valid_mask[i]:
+                t_tc = tvecs[i]
+                # rvecs[i] = docking [roll, pitch, yaw] in output frame
+                R_tc = Solver.docking_euler_to_rotation_output(
+                    rvecs[i][0], rvecs[i][1], rvecs[i][2]
+                )
+                # target position in camera frame = -R_tc.T @ t_tc
+                t_ct = -R_tc.T @ t_tc
+                target_positions.append(t_ct)
+            else:
+                target_positions.append([np.nan, np.nan, np.nan])
+        target_positions = np.array(target_positions)
+        abnormal_mask = compute_abnormal_mask(tvecs, valid_mask)
+        normal_mask = valid_mask & ~abnormal_mask
+        normal_positions = target_positions[normal_mask]
+        abnormal_positions = target_positions[abnormal_mask]
 
         # Draw camera coordinate system at origin
         axis_length = 0.3
@@ -184,19 +236,24 @@ def visualize_3d_trajectory(
             ax.quiver(0, 0, 0, axis[0], axis[1], axis[2],
                      color=color, arrow_length_ratio=0.2, linewidth=2)
 
-        # Draw target trajectory
-        if len(valid_positions) > 0:
-            ax.plot3D(valid_positions[:, 0], valid_positions[:, 1], valid_positions[:, 2],
+        # Draw target trajectory (normal in color, abnormal faded gray)
+        if len(normal_positions) > 0:
+            ax.plot3D(normal_positions[:, 0], normal_positions[:, 1], normal_positions[:, 2],
                      color=COLOR_TRAJECTORY_VALID, linewidth=2, label='Target Trajectory')
-            ax.scatter(*valid_positions[0], c=COLOR_START_POINT, marker='o', s=100, label='Start')
-            ax.scatter(*valid_positions[-1], c=COLOR_END_POINT, marker='s', s=100, label='End')
+            ax.scatter(*normal_positions[0], c=COLOR_START_POINT, marker='o', s=100, label='Start')
+            ax.scatter(*normal_positions[-1], c=COLOR_END_POINT, marker='s', s=100, label='End')
+        if len(abnormal_positions) > 0:
+            ax.scatter(abnormal_positions[:, 0], abnormal_positions[:, 1],
+                       abnormal_positions[:, 2], c=COLOR_TRAJECTORY_ABNORMAL,
+                       marker='x', s=30, alpha=ABNORMAL_ALPHA,
+                       label='Abnormal (Z<0)')
 
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.set_zlabel('Z (m)')
         ax.set_title('3D Trajectory Visualization (Camera as Origin)')
 
-        # Set initial view for OpenCV coordinate intuition
+        # Set initial view for physical target frame
         ax.view_init(elev=20, azim=-60)
 
     # Set equal aspect ratio
@@ -233,46 +290,35 @@ def visualize_2d_trajectory(
     """
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-    # Position plots
-    axes[0, 0].plot(timestamps[valid_mask], tvecs[valid_mask, 0], 'b-', label='X')
-    axes[0, 0].set_xlabel('Time (s)')
-    axes[0, 0].set_ylabel('Position (m)')
-    axes[0, 0].set_title('X Position vs Time')
-    axes[0, 0].grid(True)
-
-    axes[0, 1].plot(timestamps[valid_mask], tvecs[valid_mask, 1], 'g-', label='Y')
-    axes[0, 1].set_xlabel('Time (s)')
-    axes[0, 1].set_ylabel('Position (m)')
-    axes[0, 1].set_title('Y Position vs Time')
-    axes[0, 1].grid(True)
-
-    axes[0, 2].plot(timestamps[valid_mask], tvecs[valid_mask, 2], 'r-', label='Z')
-    axes[0, 2].set_xlabel('Time (s)')
-    axes[0, 2].set_ylabel('Position (m)')
-    axes[0, 2].set_title('Z Position vs Time')
-    axes[0, 2].grid(True)
-
-    # Rotation plots (convert to degrees)
+    abnormal_mask = compute_abnormal_mask(tvecs, valid_mask)
+    normal_mask = valid_mask & ~abnormal_mask
     rvecs_deg = np.degrees(rvecs)
-    axes[1, 0].plot(timestamps[valid_mask], rvecs_deg[valid_mask, 0], 'b-', label='Roll')
-    axes[1, 0].set_xlabel('Time (s)')
-    axes[1, 0].set_ylabel('Angle (deg)')
-    axes[1, 0].set_title('Rotation X (Roll) vs Time')
-    axes[1, 0].grid(True)
 
-    axes[1, 1].plot(timestamps[valid_mask], rvecs_deg[valid_mask, 1], 'g-', label='Pitch')
-    axes[1, 1].set_xlabel('Time (s)')
-    axes[1, 1].set_ylabel('Angle (deg)')
-    axes[1, 1].set_title('Rotation Y (Pitch) vs Time')
-    axes[1, 1].grid(True)
+    def _plot_channel(ax, data, color, title, ylabel):
+        """Plot normal frames as a colored line and abnormal ones faded gray."""
+        ax.plot(timestamps[normal_mask], data[normal_mask], color=color,
+                linestyle='-')
+        if np.any(abnormal_mask):
+            ax.scatter(timestamps[abnormal_mask], data[abnormal_mask],
+                       c=COLOR_TRAJECTORY_ABNORMAL, marker='x', s=20,
+                       alpha=ABNORMAL_ALPHA, label='Abnormal (Z<0)')
+            ax.legend(fontsize=8)
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.grid(True)
 
-    axes[1, 2].plot(timestamps[valid_mask], rvecs_deg[valid_mask, 2], 'r-', label='Yaw')
-    axes[1, 2].set_xlabel('Time (s)')
-    axes[1, 2].set_ylabel('Angle (deg)')
-    axes[1, 2].set_title('Rotation Z (Yaw) vs Time')
-    axes[1, 2].grid(True)
+    # Position plots (camera position in target frame)
+    _plot_channel(axes[0, 0], tvecs[:, 0], 'b', 'Camera X in Target Frame', 'Position (m)')
+    _plot_channel(axes[0, 1], tvecs[:, 1], 'g', 'Camera Y in Target Frame', 'Position (m)')
+    _plot_channel(axes[0, 2], tvecs[:, 2], 'r', 'Camera Z in Target Frame', 'Position (m)')
 
-    fig.suptitle('6-DOF Pose Trajectory Over Time', fontsize=14)
+    # Rotation plots (camera rotation in target frame, in degrees)
+    _plot_channel(axes[1, 0], rvecs_deg[:, 0], 'b', 'Cam Roll in Target Frame', 'Angle (deg)')
+    _plot_channel(axes[1, 1], rvecs_deg[:, 1], 'g', 'Cam Pitch in Target Frame', 'Angle (deg)')
+    _plot_channel(axes[1, 2], rvecs_deg[:, 2], 'r', 'Cam Yaw in Target Frame', 'Angle (deg)')
+
+    fig.suptitle('6-DOF Camera Pose in Target Frame Over Time', fontsize=14)
     plt.tight_layout()
 
     if save_path:
@@ -304,6 +350,11 @@ def print_trajectory_summary(
     print(f"File: {filepath}")
     print(f"Total frames: {len(timestamps)}")
     print(f"Valid poses: {np.sum(valid_mask)} ({100*np.sum(valid_mask)/len(valid_mask):.1f}%)")
+    abnormal_mask = compute_abnormal_mask(tvecs, valid_mask)
+    n_abnormal = int(np.sum(abnormal_mask))
+    if n_abnormal > 0:
+        print(f"Abnormal (Z<0, faded): {n_abnormal} "
+              f"({100*n_abnormal/max(int(np.sum(valid_mask)),1):.1f}% of valid)")
     print(f"Duration: {timestamps[-1]:.2f} seconds")
     print(f"Average FPS: {len(timestamps)/timestamps[-1]:.2f}")
 
@@ -311,7 +362,7 @@ def print_trajectory_summary(
         valid_tvecs = tvecs[valid_mask]
         valid_rvecs = rvecs[valid_mask]
 
-        print("\nPosition Statistics (valid frames only):")
+        print("\nPosition Statistics (valid frames only, camera in target frame):")
         print(f"  X: min={valid_tvecs[:, 0].min():.3f}, max={valid_tvecs[:, 0].max():.3f}, "
               f"mean={valid_tvecs[:, 0].mean():.3f}, std={valid_tvecs[:, 0].std():.3f}")
         print(f"  Y: min={valid_tvecs[:, 1].min():.3f}, max={valid_tvecs[:, 1].max():.3f}, "
@@ -320,12 +371,12 @@ def print_trajectory_summary(
               f"mean={valid_tvecs[:, 2].mean():.3f}, std={valid_tvecs[:, 2].std():.3f}")
 
         rvecs_deg = np.degrees(valid_rvecs)
-        print("\nRotation Statistics (valid frames only, in degrees):")
-        print(f"  Rx: min={rvecs_deg[:, 0].min():.2f}, max={rvecs_deg[:, 0].max():.2f}, "
+        print("\nRotation Statistics (valid frames only, camera in target frame, in degrees):")
+        print(f"  Roll: min={rvecs_deg[:, 0].min():.2f}, max={rvecs_deg[:, 0].max():.2f}, "
               f"mean={rvecs_deg[:, 0].mean():.2f}, std={rvecs_deg[:, 0].std():.2f}")
-        print(f"  Ry: min={rvecs_deg[:, 1].min():.2f}, max={rvecs_deg[:, 1].max():.2f}, "
+        print(f"  Pitch: min={rvecs_deg[:, 1].min():.2f}, max={rvecs_deg[:, 1].max():.2f}, "
               f"mean={rvecs_deg[:, 1].mean():.2f}, std={rvecs_deg[:, 1].std():.2f}")
-        print(f"  Rz: min={rvecs_deg[:, 2].min():.2f}, max={rvecs_deg[:, 2].max():.2f}, "
+        print(f"  Yaw: min={rvecs_deg[:, 2].min():.2f}, max={rvecs_deg[:, 2].max():.2f}, "
               f"mean={rvecs_deg[:, 2].mean():.2f}, std={rvecs_deg[:, 2].std():.2f}")
 
     print("=" * 60 + "\n")

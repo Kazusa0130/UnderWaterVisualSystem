@@ -6,6 +6,7 @@ import sys
 from detector import ObjectDetector
 from solver import Solver
 from tools import count_files_in_directory
+from pose_viz_live import LivePoseVisualizer
 from config import (
     DEBUG,
     MODEL_PATH,
@@ -20,6 +21,7 @@ from config import (
     SERIAL_ENABLED,
     SERIAL_PORT,
     SERIAL_BAUD,
+    ENABLE_LIVE_MATPLOTLIB_VIZ,
 )
 
 
@@ -30,6 +32,7 @@ def visualize_frame(
     solver: Solver,
     is_valid: bool = True,
     show_rotation: bool = True,
+    pose_text: tuple | None = None,
 ) -> np.ndarray:
     """Visualizes 2D pose on a single frame.
 
@@ -41,6 +44,11 @@ def visualize_frame(
         is_valid: Whether the pose is valid (affects display color).
         show_rotation: Whether to show rotation info (axes + Yaw/Pitch/Roll).
             Recommended False for 4-point mode.
+        pose_text: Optional ``(x, y, z, roll, pitch, yaw)`` in the docking
+            output frame O (meters, degrees in ``(-180, 180]``). Passed through to
+            :meth:`Solver.visualize_pose` so the on-image readout matches the
+            serial/CSV output. When None, the legacy camera-frame decomposition
+            is shown.
 
     Returns:
         Output frame with pose information drawn.
@@ -51,7 +59,8 @@ def visualize_frame(
         solver.rvec = rvec
         solver.tvec = tvec
         out_frame = solver.visualize_pose(
-            out_frame, length=0.2, show_rotation=show_rotation
+            out_frame, length=0.2, show_rotation=show_rotation,
+            pose_text=pose_text,
         )
 
         if DEBUG:
@@ -116,6 +125,7 @@ def main() -> None:
             SAVE_PATH + "traj_data/" + f"traj_{traj_data_count}.csv", "w"
         )
         traj_file.write("timestamp,frame_id,x,y,z,yaw,pitch,roll\n")
+        # x,y,z in meters; yaw,pitch,roll in degrees (output frame O).
 
     if not cap.isOpened():
         print("Unable to open video:", VIDEO_PATH)
@@ -132,6 +142,12 @@ def main() -> None:
         except Exception as e:
             print(f"Failed to open serial port: {e}")
             ser = None
+
+    # Live matplotlib visualization window
+    viz = None
+    if ENABLE_LIVE_MATPLOTLIB_VIZ:
+        viz = LivePoseVisualizer(history_size=300)
+        print("Live matplotlib pose visualization enabled.")
 
     start_timestamp = time.time()
     frame_id = 0
@@ -164,24 +180,35 @@ def main() -> None:
         rvec, tvec = None, None
         # Pose in target frame (camera relative to target) - used for serial/log
         rvec_cam, tvec_cam = None, None
+        roll = pitch = yaw = None
         is_valid = False
 
         if len(center_points) >= 4:
             success, rvec_raw, tvec_raw = solver.solver(center_points)
             if success and rvec_raw is not None and tvec_raw is not None:
-                is_valid = True
                 tvec = tvec_raw.flatten()
                 rvec = rvec_raw.flatten()
 
-                # Convert to camera pose in target frame for serial/log output
-                rvec_cam, tvec_cam = solver.get_camera_pose_in_target_frame(
-                    rvec, tvec
-                )
+                # Abnormal value filter: target behind camera (z < 0)
+                if tvec[2] < 0:
+                    is_valid = False
+                    rvec, tvec = None, None
+                    rvec_cam, tvec_cam = None, None
+                else:
+                    is_valid = True
+                    # Convert to camera pose in target frame + Euler angles
+                    rvec_cam, tvec_cam, roll, pitch, yaw = (
+                        solver.get_camera_pose_euler_in_target_frame(rvec, tvec)
+                    )
 
-                if tvec_cam is not None and rvec_cam is not None:
+                if tvec_cam is not None and roll is not None:
+                    # Angles to degrees, all in (-180,180].
+                    roll_deg = np.degrees(roll)
+                    pitch_deg = np.degrees(pitch)
+                    yaw_deg = np.degrees(yaw)
                     msg = (
                         f"[{tvec_cam[0]:.2f},{tvec_cam[1]:.2f},{tvec_cam[2]:.2f},"
-                        f"{rvec_cam[0]:.2f},{rvec_cam[1]:.2f},{rvec_cam[2]:.2f},"
+                        f"{roll_deg:.2f},{pitch_deg:.2f},{yaw_deg:.2f},"
                         f"{solver.mode}]\r\n"
                     )
                     print("Pose (cam in target):", msg.strip())
@@ -212,11 +239,13 @@ def main() -> None:
         # Save trajectory data (camera pose in target frame).
         if SAVE_OUTPUT and traj_file is not None:
             timestamp = time.time() - start_timestamp
-            if rvec_cam is not None and tvec_cam is not None:
+            if rvec_cam is not None and tvec_cam is not None and roll is not None:
+                # Angles stored in degrees, all in (-180,180].
                 traj_file.write(
                     f"{timestamp:.6f},{frame_id},"
                     f"{tvec_cam[0]:.6f},{tvec_cam[1]:.6f},{tvec_cam[2]:.6f},"
-                    f"{rvec_cam[2]:.6f},{rvec_cam[1]:.6f},{rvec_cam[0]:.6f}\n"
+                    f"{np.degrees(yaw):.6f},{np.degrees(pitch):.6f},"
+                    f"{np.degrees(roll):.6f}\n"
                 )
                 traj_file.flush()
             else:
@@ -227,6 +256,14 @@ def main() -> None:
             frame_id += 1
 
         # Visualization.
+        # Build the on-image readout from the docking output frame O so it
+        # matches the serial/CSV values exactly (angles in degrees, (-180,180]).
+        pose_text = None
+        if tvec_cam is not None and roll is not None:
+            pose_text = (
+                tvec_cam[0], tvec_cam[1], tvec_cam[2],
+                np.degrees(roll), np.degrees(pitch), np.degrees(yaw),
+            )
         out_frame = visualize_frame(
             frame=out_frame,
             rvec=rvec,
@@ -234,6 +271,7 @@ def main() -> None:
             solver=solver,
             is_valid=is_valid,
             show_rotation=(solver.mode == 1 or (solver.mode == 0 and SHOW_ROTATION_FOR_4POINT)),
+            pose_text=pose_text,
         )
 
         if DEBUG:
@@ -242,7 +280,17 @@ def main() -> None:
         if SAVE_OUTPUT and output_data_out is not None:
             output_data_out.write(out_frame)
 
+        # Update live matplotlib visualization window
+        if viz is not None:
+            viz.update(
+                tvec_cam, rvec_cam, is_valid=is_valid, roll=roll, pitch=pitch, yaw=yaw
+            )
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+        if viz is not None and viz.should_quit():
+            print("Matplotlib window closed, exiting...")
             break
 
         end_time = time.time()
@@ -264,6 +312,10 @@ def main() -> None:
     if ser is not None:
         ser.close()
         print("Serial port closed.")
+
+    # Close live matplotlib visualization.
+    if viz is not None:
+        viz.close()
 
     cap.release()
     cv2.destroyAllWindows()

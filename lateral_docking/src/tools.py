@@ -47,11 +47,21 @@ def parse_traj_file(filepath):
     File format:
         timestamp,frame_id,x,y,z,yaw,pitch,roll
 
+    Coordinate system (output target frame O):
+        - X: left (positive toward image left)
+        - Y: down (positive toward the ground)
+        - Z: toward camera (normal to target, positive in front)
+
+    Angles in the CSV are stored in **degrees** (roll, pitch, yaw all in
+    (-180, 180]) and converted back to radians on load.
+
     Args:
         filepath: Path to the trajectory CSV file.
 
     Returns:
         Tuple of (timestamps, tvecs, rvecs, valid_mask) where each is a numpy array.
+        tvecs stores [x, y, z] in meters (output frame O).
+        rvecs stores [roll, pitch, yaw] in radians (output frame O).
         valid_mask is inferred from whether x,y,z,yaw,pitch,roll are all zero.
         Returns None if file cannot be parsed.
     """
@@ -72,8 +82,10 @@ def parse_traj_file(filepath):
                 if len(parts) >= 8:
                     timestamps.append(float(parts[0]))
                     tvecs.append([float(parts[2]), float(parts[3]), float(parts[4])])
-                    # Restore rvec from roll,pitch,yaw ordering: rvec = [roll, pitch, yaw]
-                    rvecs.append([float(parts[7]), float(parts[6]), float(parts[5])])
+                    # CSV stores degrees; convert to radians as [roll, pitch, yaw]
+                    rvecs.append([np.radians(float(parts[7])),
+                                  np.radians(float(parts[6])),
+                                  np.radians(float(parts[5]))])
                     is_valid = not (float(parts[2]) == 0.0 and float(parts[3]) == 0.0 and float(parts[4]) == 0.0
                                     and float(parts[5]) == 0.0 and float(parts[6]) == 0.0 and float(parts[7]) == 0.0)
                     valid_mask.append(is_valid)
@@ -87,8 +99,10 @@ def parse_traj_file(filepath):
                 if len(parts) >= 8:
                     timestamps.append(float(parts[0]))
                     tvecs.append([float(parts[2]), float(parts[3]), float(parts[4])])
-                    # Restore rvec from roll,pitch,yaw ordering: rvec = [roll, pitch, yaw]
-                    rvecs.append([float(parts[7]), float(parts[6]), float(parts[5])])
+                    # CSV stores degrees; convert to radians as [roll, pitch, yaw]
+                    rvecs.append([np.radians(float(parts[7])),
+                                  np.radians(float(parts[6])),
+                                  np.radians(float(parts[5]))])
                     is_valid = not (float(parts[2]) == 0.0 and float(parts[3]) == 0.0 and float(parts[4]) == 0.0
                                     and float(parts[5]) == 0.0 and float(parts[6]) == 0.0 and float(parts[7]) == 0.0)
                     valid_mask.append(is_valid)
