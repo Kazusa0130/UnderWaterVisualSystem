@@ -158,12 +158,14 @@ def main() -> None:
         if not ret:
             print("VideoStream end or cannot fetch the frame.")
             break
-
-        right = frame[:, 0:640, :]
-        left = frame[:, 640:1280, :]
-        if FLIP:
-            left = cv2.flip(left, -1)
-            right = cv2.flip(right, -1)
+        if frame.shape[1] != 1280:
+            left = frame
+        else:
+            right = frame[:, 0:640, :]
+            left = frame[:, 640:1280, :]
+            if FLIP:
+                left = cv2.flip(left, -1)
+                right = cv2.flip(right, -1)
 
         if SAVE_OUTPUT and raw_data_out is not None:
             raw_data_out.write(left)

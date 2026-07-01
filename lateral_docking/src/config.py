@@ -1,6 +1,6 @@
-MODEL_PATH = "./lateral_docking/models/best_0513.pt"
+MODEL_PATH = "./lateral_docking/models/best_0622.pt"
 # VIDEO_PATH = "./lateral_docking/videos/rawdata_14_cut1.avi"
-VIDEO_PATH = "./lateral_docking/videos/2026_0605/data7.mp4"# VIDEO_PATH = 0
+VIDEO_PATH = "./lateral_docking/videos/2026_0622/raw_data_0622.mp4"# VIDEO_PATH = 0
 CONFIG_PATH = "./lateral_docking/config/stereo_camera_npu/camera_parameters.yaml"
 SAVE_PATH = "./lateral_docking/outputs/"
 
@@ -31,4 +31,4 @@ OBJ_LENGTH = 0.60  # m - 目标长度（用于可视化）
 OBJ_WIDTH = 0.46   # m - 目标宽度（用于可视化）
 
 # 实时 matplotlib 位姿可视化窗口（独立窗口，类似 visualize_traj.py 风格）
-ENABLE_LIVE_MATPLOTLIB_VIZ = True  # True: 启用独立 matplotlib 实时位姿窗口
+ENABLE_LIVE_MATPLOTLIB_VIZ = False  # True: 启用独立 matplotlib 实时位姿窗口
