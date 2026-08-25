@@ -25,3 +25,5 @@ test*.py
 CLAUDE.md
 *.ps1
 .DS_Store
+
+./lateral_docking/outputs/*
