@@ -1,6 +1,12 @@
-"""LED array detector using YOLO only."""
+"""LED array detector with YOLO.
 
-from typing import List, Tuple, Optional
+Detection pipeline (Ye Li et al. §4.3 inspired):
+  1. YOLO predicts bounding boxes (replaces Mean-Shift candidate extraction).
+  2. Bounding-box centers are used directly as feature points.
+  3. Geometric validation via rectangular constraint (replaces SVM filtering).
+"""
+
+from typing import List, Tuple
 
 import cv2
 import numpy as np
@@ -10,18 +16,31 @@ from config import (
     DEBUG,
     YOLO_CENTER_CLASS_ID,
     YOLO_CORNER_CLASS_ID,
+    GEOMETRY_REJECT_INVALID,
+    GEOMETRY_MIN_AREA_PX2,
+    GEOMETRY_MAX_ASPECT_RATIO,
+    GEOMETRY_MIN_ANGLE_DEG,
 )
+from corner_refinement import validate_rectangular_geometry
 
 
 class ObjectDetector:
-    """Detects underwater LED targets using YOLO only.
+    """Detects underwater LED targets using YOLO.
 
-    This class wraps the YOLO model to detect corner points and optionally
-    a center point. If a center point is detected alongside 4 corners,
-    5-point PnP mode is used; otherwise 4-point PnP mode is used.
+    This class wraps the YOLO model to detect four corner points and a
+    dedicated center-LED point.  The center point is taken directly from the
+    YOLO ``YOLO_CENTER_CLASS_ID`` output (no extra geometric in-corners
+    check); when present alongside four corners it enables 5-point PnP mode,
+    otherwise 4-point PnP mode is used.
+
+    The raw YOLO bounding-box centers are used directly as feature points.
     """
 
-    def __init__(self, model_path: str = "yolov8n.pt", debug: bool = False) -> None:
+    def __init__(
+        self,
+        model_path: str = "yolov8n.pt",
+        debug: bool = False,
+    ) -> None:
         """Initializes the detector.
 
         Args:
@@ -41,7 +60,7 @@ class ObjectDetector:
             image: Input BGR image.
         """
         self.results = self.model.predict(
-            source=image, conf=0.1, iou=0.8, verbose=False
+            source=image, conf=0.01, iou=0.6, verbose=False
         )
         self._parse_results()
 
@@ -60,16 +79,6 @@ class ObjectDetector:
                 [float(x1), float(y1), float(x2), float(y2)],
                 int(box.cls[0]),
             ])
-
-    def get_annotated_frame(self) -> Optional[np.ndarray]:
-        """Returns the YOLO-annotated frame.
-
-        Returns:
-            The annotated BGR image, or None if no results are available.
-        """
-        if self.results is None or len(self.results) == 0:
-            return None
-        return self.results[0].plot()
 
     def get_points(
         self,
@@ -161,32 +170,16 @@ class ObjectDetector:
 
         return vis
 
-    def _is_center_in_corners(
-        self,
-        center: Tuple[int, int],
-        corners: List[Tuple[int, int]],
-    ) -> bool:
-        """Check whether the centre point lies inside the convex hull of corners.
-
-        Args:
-            center: (x, y) of the candidate centre point.
-            corners: List of (x, y) corner points.
-
-        Returns:
-            True if the centre point is inside or on the edge of the convex
-            hull formed by the corners.
-        """
-        if len(corners) < 4:
-            return False
-        contour = np.array(corners, dtype=np.float32).reshape(-1, 1, 2)
-        hull = cv2.convexHull(contour)
-        return cv2.pointPolygonTest(hull, center, False) >= 0
-
     def _extract_yolo_points(
         self,
         vis_frame: np.ndarray,
     ) -> Tuple[List[Tuple[int, int]], int, np.ndarray]:
-        """Extracts points using YOLO class separation (mode 1).
+        """Extracts points using YOLO bounding-box centers.
+
+        Uses the center of each YOLO bounding box directly as the feature
+        point, then validates the quadrilateral geometry.  When the YOLO model
+        also predicts a center-LED point, it is trusted as-is and appended to
+        the four corners for 5-point PnP.
 
         Args:
             vis_frame: Frame to draw annotations on.
@@ -194,45 +187,70 @@ class ObjectDetector:
         Returns:
             See :meth:`get_points`.
         """
-        corner_list: List[Tuple[float, List[float]]] = []
-        center_list: List[Tuple[float, List[float]]] = []
+        # Use the YOLO bounding-box centers directly as feature points.
+        corners_raw: List[Tuple[float, float]] = []
+        centers_raw: List[Tuple[float, float]] = []
+        for conf, bbox, cls_id in self._raw_targets:
+            if conf < 0.1:
+                continue
+            x1, y1, x2, y2 = bbox
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            if cls_id == YOLO_CORNER_CLASS_ID:
+                corners_raw.append((cx, cy))
+            elif cls_id == YOLO_CENTER_CLASS_ID:
+                centers_raw.append((cx, cy))
 
-        for conf, box, cls_id in self._raw_targets:
-            if cls_id == YOLO_CENTER_CLASS_ID:
-                center_list.append((conf, box))
-            elif cls_id == YOLO_CORNER_CLASS_ID:
-                corner_list.append((conf, box))
+        # Sort corners by confidence (already sorted in _raw_targets).
+        raw_corners: List[Tuple[int, int]] = [
+            (int(round(c[0])), int(round(c[1]))) for c in corners_raw
+        ]
 
-        raw_corners: List[Tuple[int, int]] = []
-        for _, box in corner_list:
-            x1, y1, x2, y2 = map(int, box)
-            raw_corners.append(((x1 + x2) // 2, (y1 + y2) // 2))
-
-        # Keep only the bottom-most 4 corners for PnP.
+        # Keep only the best 4 corners for PnP.
         if len(raw_corners) > 4:
-            raw_corners.sort(key=lambda p: p[1], reverse=True)
             raw_corners = raw_corners[:4]
 
         points: List[Tuple[int, int]] = raw_corners
 
-        if center_list and len(points) >= 4:
-            center_list.sort(key=lambda x: x[0], reverse=True)
-            _, box = center_list[0]
-            x1, y1, x2, y2 = map(int, box)
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-            if self._is_center_in_corners((cx, cy), points):
-                points.append((cx, cy))
+        # Validate rectangular geometry (paper §4.3 SVM replacement).
+        if len(points) == 4:
+            diag: dict = {}
+            valid_geom = validate_rectangular_geometry(
+                points,
+                min_area=GEOMETRY_MIN_AREA_PX2,
+                max_aspect_ratio=GEOMETRY_MAX_ASPECT_RATIO,
+                min_angle_deg=GEOMETRY_MIN_ANGLE_DEG,
+                diagnostics=diag,
+            )
+            if not valid_geom:
                 if self.debug:
+                    area = diag.get("area")
+                    aspect = diag.get("aspect_ratio")
+                    min_angle = diag.get("min_angle")
+                    area_str = f"{area:.1f}" if area is not None else "n/a"
+                    aspect_str = f"{aspect:.2f}" if aspect is not None else "n/a"
+                    angle_str = f"{min_angle:.1f}" if min_angle is not None else "n/a"
                     print(
-                        f"YOLO center detected at ({cx}, {cy}), "
-                        f"using 5-point PnP."
+                        f"Corner geometry validation failed (points={points}, "
+                        f"reason={diag.get('reason', 'unknown')}, "
+                        f"area={area_str}, "
+                        f"aspect={aspect_str}, "
+                        f"min_angle={angle_str})."
                     )
-                return points, 1, vis_frame
+                if GEOMETRY_REJECT_INVALID:
+                    points = []
+
+        # Trust the YOLO-predicted center point directly (no extra geometric
+        # in-corners check).  The center LED class is trained specifically for
+        # this role, so the first (highest-confidence) center is appended to
+        # the corners for 5-point PnP.
+        if centers_raw and len(points) >= 4:
+            cx, cy = int(round(centers_raw[0][0])), int(round(centers_raw[0][1]))
+            points.append((cx, cy))
             if self.debug:
                 print(
-                    f"YOLO center at ({cx}, {cy}) is outside corner "
-                    f"region, falling back to 4-point PnP."
+                    f"YOLO center detected at ({cx}, {cy}), using 5-point PnP."
                 )
+            return points, 1, vis_frame
 
         if len(points) >= 4:
             if self.debug:
@@ -243,30 +261,3 @@ class ObjectDetector:
             print("Not enough corner points detected.")
         return points, -1, vis_frame
 
-    @staticmethod
-    def _draw_yolo_center(
-        frame: np.ndarray,
-        cx: int,
-        cy: int,
-    ) -> np.ndarray:
-        """Draws the YOLO-detected center point on the frame.
-
-        Args:
-            frame: Input BGR image.
-            cx: Center x-coordinate.
-            cy: Center y-coordinate.
-
-        Returns:
-            The annotated frame.
-        """
-        cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-        cv2.putText(
-            frame,
-            "YOLO Center",
-            (cx + 8, cy - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 255),
-            1,
-        )
-        return frame

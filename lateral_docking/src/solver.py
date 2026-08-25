@@ -1,7 +1,9 @@
 import cv2
 import yaml
 import numpy as np
+from itertools import combinations
 from config import *
+
 
 class Solver:
     def __init__(self, config_path, obj_width=0.05, obj_length=0.05) -> None:
@@ -22,11 +24,48 @@ class Solver:
             ( 0.100, -0.300, 0.000),   # 右上
             ( 0.245,  0.300, 0.000),   # 右下
             (-0.245,  0.300, 0.000),   # 左下
-            (0, 0, -0.98)
+            (0.000,  0.000,  0.980)    # 中心点，位于目标平面更远离相机一侧
         ])
         self.tvec = None
         self.rvec = None
-        self.mode = 0 # 0: 4 points, 1: 5 points
+        # Mode semantics (public, mainly for visualization/CSV):
+        #   0 = PnP (4-point or 5-point)
+        #   1 = traditional feature tracking (track_mode=1)
+        self.mode = 0
+        self._pnp_num_points = 0  # internal: 4 or 5, for diagnostics/viz only
+        self._last_reproj_error = None
+        self._last_num_candidates = 0  # diagnostic: survivors after gate
+
+    def _is_pose_physically_valid(
+        self,
+        tvec: np.ndarray,
+        min_depth: float | None = None,
+        max_range: float | None = None,
+    ) -> bool:
+        """Check whether a recovered translation is physically plausible.
+
+        Uses configurable depth/range gates from ``config.py``.
+
+        Args:
+            tvec: Translation vector (3,) in the camera frame.
+            min_depth: Optional override for ``PNP_MIN_DEPTH_M``.
+            max_range: Optional override for ``PNP_MAX_RANGE_M``.
+
+        Returns:
+            True if the pose passes the depth and range checks.
+        """
+        t = np.asarray(tvec, dtype=float).flatten()
+        if t.shape[0] < 3:
+            return False
+        if min_depth is None:
+            min_depth = float(PNP_MIN_DEPTH_M)
+        if max_range is None:
+            max_range = float(PNP_MAX_RANGE_M)
+        if t[2] < min_depth:
+            return False
+        if np.linalg.norm(t) >= max_range:
+            return False
+        return True
 
     def solver(self, points):
         """Solves PnP with the given image points.
@@ -35,27 +74,30 @@ class Solver:
         of detected points.
 
         Args:
-            points: List of (x, y) pixel coordinates.
+            points: List of (x, y) pixel coordinates. For 5-point mode the
+                expected order is ``[corner0, corner1, corner2, corner3, center]``.
 
         Returns:
             Tuple of (success, rvec, tvec).
         """
         target_points = []
-        if len(points) >= 5:
-            self.mode = 1
-            if len(points) > 5:
-                points.sort(key=lambda item: item[1])
-                target_points = points[-5:]
-            elif len(points) == 5:
-                target_points = points
-            else:
-                print("Not enough points for 5-point PnP.")
-                return False, None, None
-            success, rvec, tvec = self.solve_pnp_5p(target_points)
-        elif len(points) == 4:
-            self.mode = 0
+        self.mode = 0  # PnP mode
+        if len(points) == 4:
+            self._pnp_num_points = 4
             target_points = points
             success, rvec, tvec = self.solve_pnp(target_points)
+        elif len(points) == 5:
+            self._pnp_num_points = 5
+            target_points = points
+            success, rvec, tvec = self._solve_pnp_5p(target_points)
+        elif len(points) > 5:
+            # Defensive: reduce to the best 4 corners + 1 center.
+            self._pnp_num_points = 5
+            target_points = self._select_best_five(points)
+            if target_points is None or len(target_points) != 5:
+                print("Unable to reduce >5 points to a valid 5-point set.")
+                return False, None, None
+            success, rvec, tvec = self._solve_pnp_5p(target_points)
         else:
             print("Not enough points for PnP (need at least 4).")
             return False, None, None
@@ -64,7 +106,79 @@ class Solver:
             print("PnP solving failed.")
         return success, rvec, tvec
 
-    def solve_pnp_5p(self, target_points):
+    def _select_best_five(
+        self, points: list[tuple[float, float]]
+    ) -> list[tuple[float, float]] | None:
+        """Reduce >5 input points to 4 corners + 1 center.
+
+        Uses the convex hull to identify corner candidates and selects the
+        interior point closest to the hull centroid as the center.
+
+        Args:
+            points: List of (x, y) pixel coordinates.
+
+        Returns:
+            A list of 5 points ``[corner0..corner3, center]`` or ``None`` if
+            no valid reduction is found.
+        """
+        pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+        if len(pts) < 5:
+            return None
+
+        hull = cv2.convexHull(pts, returnPoints=True).reshape(-1, 2)
+        if len(hull) != 4:
+            # Hull is not a quadrilateral: fall back to the largest-area
+            # 4-subset plus the centroid of the remaining points.
+            best_area = -1.0
+            best_quad = None
+            for quad_idx in combinations(range(len(pts)), 4):
+                quad = pts[list(quad_idx)]
+                area = cv2.contourArea(quad.reshape(-1, 1, 2))
+                if area > best_area:
+                    best_area = area
+                    best_quad = quad_idx
+            if best_quad is None:
+                return None
+            corner_mask = np.zeros(len(pts), dtype=bool)
+            corner_mask[list(best_quad)] = True
+            corners = pts[corner_mask]
+            center = np.mean(pts[~corner_mask], axis=0)
+        else:
+            corners = hull
+            # Interior points are those not on the hull.
+            hull_set = {tuple(p) for p in np.round(hull, 6)}
+            interior = [p for p in pts if tuple(np.round(p, 6)) not in hull_set]
+            if not interior:
+                return None
+            hull_centroid = np.mean(hull, axis=0)
+            center = min(interior, key=lambda p: np.linalg.norm(p - hull_centroid))
+
+        ordered_corners = self._order_corners_clockwise(corners)
+        result = [tuple(p) for p in ordered_corners] + [tuple(center)]
+        return result
+
+    @staticmethod
+    def _order_corners_clockwise(pts: np.ndarray) -> np.ndarray:
+        """Order four corner points clockwise starting from top-left.
+
+        Args:
+            pts: Array of shape (4, 2).
+
+        Returns:
+            Clockwise ordered corners (top-left, top-right, bottom-right,
+            bottom-left).
+        """
+        pts = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+        if len(pts) != 4:
+            return pts
+        center = np.mean(pts, axis=0)
+        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+        # Sort by angle; image y increases downward, so standard atan2 already
+        # gives a clockwise ordering when plotted in image coordinates.
+        ordered = pts[np.argsort(angles)]
+        return ordered
+
+    def _solve_pnp_5p(self, target_points):
         points = self.sort_points_(target_points)
         points = np.array([
             [points[0][0], points[0][1]],
@@ -74,46 +188,166 @@ class Solver:
             [points[4][0], points[4][1]]],
             dtype=np.double
         )
-        success, self.rvec, self.tvec = cv2.solvePnP(  
-            self.obj_points_5, 
-            points, 
-            self.intrinsic_matrix, 
+        success, self.rvec, self.tvec = cv2.solvePnP(
+            self.obj_points_5,
+            points,
+            self.intrinsic_matrix,
             self.dist_coeffs,
             flags=cv2.SOLVEPNP_SQPNP
         )
-        if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 50:
+        if success and self.rvec is not None and self.tvec is not None and self._is_pose_physically_valid(self.tvec):
             self.tvec = self.tvec.flatten()
             self.rvec = self.rvec.flatten()
-            if self.tvec[2] < 0.4:
+            self._last_reproj_error = self._compute_reprojection_error(
+                self.obj_points_5, points, self.rvec, self.tvec
+            )
+            # Reprojection-error gate (Ye Li et al. outlier filtering).
+            if (
+                REPROJ_ERROR_THRESHOLD is not None
+                and self._last_reproj_error > REPROJ_ERROR_THRESHOLD
+            ):
                 success = False
-            return success, self.rvec, self.tvec
+            if success:
+                return success, self.rvec, self.tvec
+            return False, None, None
         else:
-            return success, None, None
-    
+            return False, None, None
+
+    def _compute_reprojection_error(
+        self, obj_points: np.ndarray, img_points: np.ndarray,
+        rvec: np.ndarray, tvec: np.ndarray
+    ) -> float:
+        """Mean pixel reprojection error for the given pose."""
+        projected, _ = cv2.projectPoints(
+            obj_points, rvec, tvec,
+            self.intrinsic_matrix, self.dist_coeffs
+        )
+        projected = projected.reshape(-1, 2)
+        img_points = np.asarray(img_points).reshape(-1, 2)
+        if projected.shape[0] != img_points.shape[0]:
+            return float("inf")
+        errors = np.linalg.norm(projected - img_points, axis=1)
+        return float(np.mean(errors))
+
     def solve_pnp(self, target_points):
         points = self.sort_points_(target_points)
         points = np.array([
             [points[0][0], points[0][1]],
             [points[1][0], points[1][1]],
             [points[2][0], points[2][1]],
-            [points[3][0], points[3][1]]], 
+            [points[3][0], points[3][1]]],
             dtype=np.double
         )
-        success, self.rvec, self.tvec = cv2.solvePnP(  
-            self.obj_points, 
-            points, 
-            self.intrinsic_matrix, 
+
+        self._last_reproj_error = None
+        self._last_num_candidates = 0
+
+        if MULTIHYPOTHESIS_4P:
+            ok, rvec, tvec = self._solve_pnp_4p_multi(points)
+        else:
+            ok, rvec, tvec, err = self._solve_pnp_iterative(points)
+            if (
+                ok
+                and rvec is not None
+                and tvec is not None
+                and self._is_pose_physically_valid(tvec)
+            ):
+                if REPROJ_ERROR_THRESHOLD is None or err <= REPROJ_ERROR_THRESHOLD:
+                    self.rvec = rvec
+                    self.tvec = tvec
+                    self._last_reproj_error = err
+                    return True, self.rvec, self.tvec
+            self.rvec = None
+            self.tvec = None
+            self._last_reproj_error = None
+            return False, None, None
+
+        return ok, (self.rvec if ok else None), (self.tvec if ok else None)
+
+    def _solve_pnp_iterative(self, points):
+        """4-point PnP using the iterative Levenberg-Marquardt solver.
+
+        Returns:
+            Tuple of (success, rvec, tvec, reproj_error). ``reproj_error`` is
+            ``float("inf")`` when ``success`` is False.
+        """
+        success, rvec, tvec = cv2.solvePnP(
+            self.obj_points,
+            points,
+            self.intrinsic_matrix,
             self.dist_coeffs,
             flags=cv2.SOLVEPNP_ITERATIVE
         )
-        if success and self.rvec is not None and self.tvec is not None and  np.linalg.norm(self.tvec) < 50:
-            self.tvec = self.tvec.flatten()
-            self.rvec = self.rvec.flatten()
-            if self.tvec[2] < 0.4:
-                success = False
-            return success, self.rvec, self.tvec
-        else:
-            return success, None, None
+        if success and rvec is not None and tvec is not None:
+            rvec = rvec.flatten()
+            tvec = tvec.flatten()
+            err = self._compute_reprojection_error(
+                self.obj_points, points, rvec, tvec
+            )
+            return True, rvec, tvec, err
+        return False, None, None, float("inf")
+
+    def _solve_pnp_4p_multi(self, points):
+        """Multi-hypothesis 4-point PnP (Ye Li et al., Ocean Engineering 2015).
+
+        Tries all C(4,3)=4 three-point subsets via cv2.solveP3P (each yields up
+        to 4 solutions), plus the full 4-point ITERATIVE solution. Candidates
+        are gated by depth/range/reprojection; the lowest-error survivor wins.
+
+        The 3-point subsets provide robustness when one detection is an
+        outlier: the subset excluding it yields a clean solution that
+        out-ranks the contaminated full-4-point solve.
+
+        Returns:
+            Tuple of (success, rvec, tvec). ``self._last_reproj_error`` and
+            ``self._last_num_candidates`` are set as diagnostics.
+        """
+        threshold = (
+            float(self._last_reproj_error)
+            if REPROJ_ERROR_THRESHOLD is None
+            else float(REPROJ_ERROR_THRESHOLD)
+        )
+        candidates: list[tuple[float, np.ndarray, np.ndarray]] = []
+
+        # --- 4 three-point subsets via dedicated P3P solver --------------
+        # NOTE: cv2.solvePnP(..., SOLVEPNP_P3P) asserts npoints >= 4, so the
+        # dedicated cv2.solveP3P (which takes exactly 3) must be used here.
+        for subset in combinations(range(4), 3):
+            idx = list(subset)
+            num, rvecs, tvecs = cv2.solveP3P(
+                self.obj_points[idx],
+                points[idx],
+                self.intrinsic_matrix,
+                self.dist_coeffs,
+                flags=cv2.SOLVEPNP_P3P,
+            )
+            for k in range(num):
+                r_k = np.asarray(rvecs[k], dtype=float).flatten()
+                t_k = np.asarray(tvecs[k], dtype=float).flatten()
+                if not self._is_pose_physically_valid(t_k):
+                    continue
+                err = self._compute_reprojection_error(
+                    self.obj_points, points, r_k, t_k
+                )
+                if err <= threshold:
+                    candidates.append((err, r_k, t_k))
+
+        # --- Full 4-point ITERATIVE as an additional candidate -----------
+        ok, rvec_it, tvec_it, err_it = self._solve_pnp_iterative(points)
+        if ok and err_it <= threshold:
+            candidates.append((err_it, rvec_it, tvec_it))
+
+        self._last_num_candidates = len(candidates)
+        if not candidates:
+            self._last_reproj_error = None
+            return False, None, None
+
+        candidates.sort(key=lambda c: c[0])
+        best_err, best_rvec, best_tvec = candidates[0]
+        self.rvec = best_rvec.copy()
+        self.tvec = best_tvec.copy()
+        self._last_reproj_error = best_err
+        return True, self.rvec, self.tvec
 
     @staticmethod
     def rotation_matrix_to_euler_angles(R: np.ndarray) -> tuple[float, float, float]:
@@ -255,11 +489,11 @@ class Solver:
                 axis_points_4, self.rvec, self.tvec,
                 self.intrinsic_matrix, self.dist_coeffs
             )
-            img_points = img_points.reshape(-1, 2).astype(int)
-            origin = tuple(img_points[0])
-            x_axis = tuple(img_points[1])
-            y_axis = tuple(img_points[2])
-            z_axis = tuple(img_points[3])
+            img_points = img_points.reshape(-1, 2).astype(np.int32)
+            origin = (int(img_points[0, 0]), int(img_points[0, 1]))
+            x_axis = (int(img_points[1, 0]), int(img_points[1, 1]))
+            y_axis = (int(img_points[2, 0]), int(img_points[2, 1]))
+            z_axis = (int(img_points[3, 0]), int(img_points[3, 1]))
 
             if pose_text is None:
                 # Legacy: decompose the raw camera-frame rotation/translation.
@@ -310,31 +544,40 @@ class Solver:
                 best_area = area
                 best_points = ordered_candidate
                 remain_point = points[idx]
-    
+
         best_points.append(remain_point)
         return best_points
 
     def sort_points_(self, points) -> np.ndarray:
-        points = np.array(points).reshape(-1, 2)
-        points = points[np.argsort(points[:, 1])]
-        center = np.mean(points, axis=0)
-        if self.mode == 0:
-            tmp_points = points
-        else:
-            points = self.point_selector(points)
-            tmp_points = np.array(points[:4])
-            center_point = np.array(points[4])
-        angles = []
-        for tmp_point in tmp_points:
-            angle = np.arctan2(tmp_point[1] - center[1],
-                               tmp_point[0] - center[0])
-            angles.append(angle)
+        """Order 2D image points for PnP.
 
-        sorted_indices = np.argsort(angles)
-        sorted_points = tmp_points[sorted_indices]
-        if self.mode == 1:
-            sorted_points = np.vstack([sorted_points, center_point])
-        return sorted_points
+        - 4 points: order the four corners clockwise starting near top-left.
+        - 5 points: treat the last point as the centre and order the first four
+          corners clockwise; the centre is appended unchanged.
+        - More than 5 points: should already have been reduced by
+          :meth:`_select_best_five`; this method orders the first four corners
+          and appends any remaining points as-is.
+
+        Args:
+            points: List/array of ``(x, y)`` image coordinates.
+
+        Returns:
+            ``np.ndarray`` of shape ``(N, 2)`` with the same number of points.
+        """
+        pts = np.asarray(points, dtype=float).reshape(-1, 2)
+        n = len(pts)
+        if n == 4:
+            return self._order_corners_clockwise(pts)
+
+        if n == 5:
+            selected = self.point_selector(pts.tolist())
+            return np.asarray(selected, dtype=float).reshape(-1, 2)
+
+        # Defensive fallback (should not happen in normal flow).
+        corners = self._order_corners_clockwise(pts[:4])
+        if n > 4:
+            corners = np.vstack([corners, pts[4:]])
+        return corners
 
     def get_camera_pose_in_target_frame(
         self,
@@ -472,3 +715,59 @@ class Solver:
         rvec_out, _ = cv2.Rodrigues(R_cam_out)
 
         return rvec_out.flatten(), tvec_out.flatten(), roll, pitch, yaw
+
+    # ------------------------------------------------------------------
+    # Threshold-fallback pose recovery (close-range PnP failure).
+    # ------------------------------------------------------------------
+    def solve_fallback_from_centroid(
+        self,
+        image_center: tuple[float, float],
+        target_center: tuple[float, float],
+        target_area_px: float,
+        image_size: tuple[int, int],
+        physical_area_m2: float,
+    ) -> tuple[bool, np.ndarray | None, np.ndarray | None]:
+        """Estimate camera position from a single blob centroid + area.
+
+        Used when YOLO/PnP fails at close range but a bright target blob is
+        still visible.  The method assumes the target is roughly fronto-parallel
+        and uses the pinhole projection of a known physical area to estimate
+        depth, then backs out lateral/vertical offsets from the centroid shift.
+
+        Args:
+            image_center: ``(cx, cy)`` optical center in pixels.
+            target_center: ``(tx, ty)`` target centroid in pixels.
+            target_area_px: Projected area of the target blob in pixels².
+            image_size: ``(width, height)`` of the image.
+            physical_area_m2: Known physical area of the target in m².
+
+        Returns:
+            ``(success, tvec_cam, rvec_cam)``.  ``tvec_cam`` is the camera
+            position in the docking output frame O.  ``rvec_cam`` is returned
+            as ``None`` because orientation cannot be estimated from a single
+            blob.  ``success`` is False when the area is non-positive or the
+            recovered depth is outside the configured gate.
+        """
+        if target_area_px <= 0 or physical_area_m2 <= 0:
+            return False, None, None
+
+        fx = self.intrinsic_matrix[0, 0]
+        fy = self.intrinsic_matrix[1, 1]
+        f_avg = (fx + fy) * 0.5
+
+        # Depth from area ratio (fronto-parallel approximation).
+        z = f_avg * np.sqrt(physical_area_m2 / target_area_px)
+        if not self._is_pose_physically_valid(np.array([0.0, 0.0, z])):
+            return False, None, None
+
+        cx, cy = image_center
+        tx, ty = target_center
+        dx_px = tx - cx
+        dy_px = ty - cy
+
+        # Output frame O: X-left, Y-down, Z-toward-camera.
+        x_out = -(dx_px / fx) * z
+        y_out = (dy_px / fy) * z
+        tvec_out = np.array([x_out, y_out, z], dtype=float)
+
+        return True, None, tvec_out

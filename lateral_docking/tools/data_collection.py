@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import sys
 
-VIDEO_PATH = 0  # Use 0 for webcam
-SAVE_PATH = "/home/nvidia/Documents/tools/rawdata/"
+VIDEO_PATH = 1  # Use 0 for webcam
+SAVE_PATH = "C:/Users/HaoZheJiang/Downloads/nwpu_xianxia/datasets_0813/"
 
 
 def count_files_in_directory(directory_path):
@@ -18,7 +18,7 @@ def count_files_in_directory(directory_path):
 
 def main():
     count = count_files_in_directory(SAVE_PATH)
-    fourcc = cv2.VideoWriter_fourcc(*'DIVX')  # ty:ignore[unresolved-attribute]
+    fourcc = cv2.VideoWriter_fourcc(*'I420')  # ty:ignore[unresolved-attribute]
     out = cv2.VideoWriter(SAVE_PATH+f"rawdata_{count}.avi", fourcc, 20, (1280, 480), isColor=True)
 
     camera = cv2.VideoCapture(VIDEO_PATH)

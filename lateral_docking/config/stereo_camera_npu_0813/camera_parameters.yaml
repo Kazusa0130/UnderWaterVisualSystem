@@ -1,0 +1,48 @@
+# Intrinsic/distortion/extrinsic parameters extracted from calibrationSession.mat.
+# rectification_matrix and projection_matrix were derived with cv2.stereoRectify(alpha=0, CALIB_ZERO_DISPARITY).
+# RotationMatrix below retains MATLAB RotationOfCamera2 row-vector convention; OpenCV column-vector R is its transpose.
+# TranslationVector is in millimeters.
+Left:
+    CameraMatrix:
+        rows: 3
+        cols: 3
+        data: [429.640276264, 0, 289.702149634, 0, 428.888726876, 173.815853413, 0, 0, 1]
+    distortion_model: plumb_bob
+    distortion_coefficients:
+        rows: 1
+        cols: 5
+        data: [-0.195034904039, 0.0491951951461, 0, 0, 0]
+    rectification_matrix:
+        rows: 3
+        cols: 3
+        data: [0.999914401496, -9.16952882802e-05, -0.0130836261036, 2.315939391e-05, 0.99998627948, -0.00523835044886, 0.0130839269215, 0.00523759904505, 0.999900684274]
+    projection_matrix:
+        rows: 3
+        cols: 4
+        data: [421.519223605, 0, 285.202537537, 0, 0, 421.519223605, 166.650503159, 0, 0, 0, 1, 0]
+Right:
+    CameraMatrix:
+        rows: 3
+        cols: 3
+        data: [430.286559792, 0, 285.453453479, 0, 428.782306121, 195.412886536, 0, 0, 1]
+    distortion_model: plumb_bob
+    distortion_coefficients:
+        rows: 1
+        cols: 5
+        data: [-0.207821162624, 0.0493786583006, 0, 0, 0]
+    rectification_matrix:
+        rows: 3
+        cols: 3
+        data: [0.999878971885, 0.000328562915791, -0.0155542158059, -0.000247081609589, 0.999986239705, 0.00524016703371, 0.0155557234999, -0.00523568966549, 0.999865294437]
+    projection_matrix:
+        rows: 3
+        cols: 4
+        data: [421.519223605, 0, 285.202537537, -40604.6553389, 0, 421.519223605, 166.650503159, 0, 0, 0, 1, 0]
+RotationMatrix:
+    rows: 3
+    cols: 3
+    data: [0.999996907968, 0.00028319048556, -0.00247059858545, -0.000257287767525, 0.999945066803, 0.0104784148955, 0.00247343025497, -0.0104777468411, 0.999942047803]
+TranslationVector:
+    rows: 3
+    cols: 1
+    data: [-96.3176499682, -0.0316502384844, 1.4983268532]
